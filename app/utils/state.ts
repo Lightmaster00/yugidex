@@ -246,7 +246,7 @@ export function undoLastResult (state: TournamentState): TournamentState | null 
     if (state.phase2Threshold === 0) {
       prev.winnersPhase1 = (state.winnersPhase1 ?? []).slice(0, -1)
       prev.losersPhase1 = (state.losersPhase1 ?? []).slice(0, -last.losers!.length)
-      prev.remainingNames = [last.winner, ...last.losers]
+      prev.remainingNames = [...state.remainingNames, last.winner, ...last.losers]
     } else {
       prev.remainingNames = [...state.remainingNames, ...last.losers]
     }
