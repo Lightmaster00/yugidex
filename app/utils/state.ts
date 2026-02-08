@@ -115,6 +115,7 @@ export function applyGroupResult (
   }
 
   const groupsCompleted = state.groupsCompleted + 1
+  const willAdvance = groupsCompleted >= state.groupsTotal
   const next: TournamentState = {
     ...state,
     archetypes: nextArchetypes,
@@ -126,12 +127,19 @@ export function applyGroupResult (
       match: [...(state.currentMatch ?? [])],
       winner,
       losers: [...losers],
-      eloDelta
+      eloDelta,
+      // Snapshot pour restauration lors d'un undo de transition de phase/round
+      ...(willAdvance ? {
+        prevGroups: state.currentRoundGroups,
+        prevPhasePool: [...state.phasePool],
+        prevGroupsTotal: state.groupsTotal,
+        prevPhaseRound: state.phaseRound
+      } : {})
     }
   }
 
   // Round terminé ?
-  if (groupsCompleted >= state.groupsTotal) {
+  if (willAdvance) {
     return advanceToNextPhaseRound(next)
   }
   return next
@@ -269,17 +277,24 @@ export function undoLastResult (state: TournamentState): TournamentState | null 
     }
     // Remettre le match en cours et décrémenter groupsCompleted
     prev.currentMatch = last.match
-    prev.groupsCompleted = Math.max(0, state.groupsCompleted - 1)
-    // Si on était passé à la phase suivante, revenir
-    if (state.phase !== last.phase) {
+    // Si on était passé à la phase suivante, restaurer depuis le snapshot
+    if (state.phase !== last.phase && last.prevGroups !== undefined) {
+      prev.phase = last.phase
+      prev.currentRoundGroups = last.prevGroups
+      prev.phasePool = last.prevPhasePool ?? state.phasePool
+      prev.groupsTotal = last.prevGroupsTotal ?? state.groupsTotal
+      prev.phaseRound = last.prevPhaseRound ?? 0
+      prev.groupsCompleted = (last.prevGroupsTotal ?? 1) - 1
+    } else if (state.phase !== last.phase) {
+      // Fallback : pas de snapshot (ancien format localStorage)
       prev.phase = last.phase
       prev.phasePool = state.phase === 'phase2' ? state.remainingNames : state.phasePool
-      // On doit reconstituer les groupes du round précédent : on remet le dernier
-      // Comme on ne stocke qu'un seul round de groupes, on se contente de revenir
-      // au dernier groupe du round (approximation suffisante car undo = 1 pas)
+      prev.groupsCompleted = Math.max(0, state.groupsCompleted - 1)
       if (last.phase === 'phase1') {
         prev.phaseRound = Math.max(0, (state.phase === 'phase2' ? COVERAGE_ROUND_COUNT : state.phaseRound) - 1)
       }
+    } else {
+      prev.groupsCompleted = Math.max(0, state.groupsCompleted - 1)
     }
     return prev
   }

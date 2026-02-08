@@ -52,6 +52,7 @@ export function exportTop10Csv (state: TournamentState): string {
 
 /** Déclenche le téléchargement du fichier CSV. */
 export function downloadTop10Csv (state: TournamentState): void {
+  if (typeof document === 'undefined') return
   const csv = exportTop10Csv(state)
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)

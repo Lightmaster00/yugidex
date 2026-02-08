@@ -6,13 +6,16 @@ on:
   push:
     branches: ['main']
 
+# Empêche les déploiements concurrents
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - run: corepack enable
 
       - uses: actions/setup-node@v4
         with:
@@ -20,8 +23,8 @@ jobs:
 
       - run: npm ci
 
-      - name: Build for GitHub Pages
-        run: npx nuxt build --preset github_pages
+      - name: Generate static site
+        run: npx nuxi generate
         env:
           NUXT_APP_BASE_URL: /${{ github.event.repository.name }}/
 

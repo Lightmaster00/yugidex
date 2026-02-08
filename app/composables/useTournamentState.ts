@@ -34,6 +34,7 @@ export function useTournamentState () {
 
   const { language: currentLang } = useCardLanguage()
   const LOAD_TIMEOUT_MS = 120_000
+  const MAX_SKIP_RETRIES = 50
 
   async function loadFromApi () {
     error.value = null
@@ -91,38 +92,49 @@ export function useTournamentState () {
   }
 
   async function setNextMatch () {
-    const s = state.value
-    if (!s) return
+    for (let attempt = 0; attempt < MAX_SKIP_RETRIES; attempt++) {
+      const s = state.value
+      if (!s) return
 
-    // Phase 1 / Phase 2 : groupes pré-calculés
-    if (s.phase === 'phase1' || s.phase === 'phase2') {
-      const groups = s.currentRoundGroups
-      if (!groups || s.groupsCompleted >= groups.length) return
-      const nextGroup = groups[s.groupsCompleted]!
-      state.value = { ...s, currentMatch: nextGroup }
-      state.value = await ensureRepresentatives(state.value, nextGroup)
-      if (state.value.currentMatch === null) await setNextMatch()
-      else persistState(state.value)
+      // Phase 1 / Phase 2 : groupes pré-calculés
+      if (s.phase === 'phase1' || s.phase === 'phase2') {
+        const groups = s.currentRoundGroups
+        if (!groups || s.groupsCompleted >= groups.length) return
+        const nextGroup = groups[s.groupsCompleted]!
+        state.value = { ...s, currentMatch: nextGroup }
+        state.value = await ensureRepresentatives(state.value, nextGroup)
+        if (state.value?.currentMatch != null) {
+          persistState(state.value)
+          return
+        }
+        // currentMatch null → skip this group, try next
+        continue
+      }
+
+      // Phase 3 : Swiss 1v1
+      if (s.phase === 'phase3') {
+        if (isPhase3Done(s)) {
+          state.value = { ...s, phase: 'finished', currentMatch: null }
+          persistState(state.value)
+          return
+        }
+        const next = getNextMatchSwiss(s, s.phasePool)
+        if (!next) {
+          state.value = { ...s, phase: 'finished', currentMatch: null }
+          persistState(state.value)
+          return
+        }
+        state.value = { ...s, currentMatch: next }
+        state.value = await ensureRepresentatives(state.value, next)
+        if (state.value?.currentMatch != null) {
+          persistState(state.value)
+          return
+        }
+        // currentMatch null → skip, try next pair
+        continue
+      }
+
       return
-    }
-
-    // Phase 3 : Swiss 1v1
-    if (s.phase === 'phase3') {
-      if (isPhase3Done(s)) {
-        state.value = { ...s, phase: 'finished', currentMatch: null }
-        persistState(state.value)
-        return
-      }
-      const next = getNextMatchSwiss(s, s.phasePool)
-      if (!next) {
-        state.value = { ...s, phase: 'finished', currentMatch: null }
-        persistState(state.value)
-        return
-      }
-      state.value = { ...s, currentMatch: next }
-      state.value = await ensureRepresentatives(state.value, next)
-      if (state.value.currentMatch === null) await setNextMatch()
-      else persistState(state.value)
     }
   }
 

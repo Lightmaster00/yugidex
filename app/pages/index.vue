@@ -84,15 +84,20 @@ function getCurrentFrameType (archetypeName: string): string | undefined {
 
 /** Phase 1/2 : l'utilisateur choisit le gagnant dans un groupe. */
 function selectGroup (name: string) {
+  const match = state.value?.currentMatch
+  if (!match) return
   selectedCard.value = name
-  const losers = state.value!.currentMatch!.filter(n => n !== name)
+  const losers = match.filter(n => n !== name)
   pickGroup(name, losers)
 }
 
 /** Phase 3 : l'utilisateur choisit le gagnant dans un duel 1v1. */
 function selectDuel (name: string) {
+  const match = state.value?.currentMatch
+  if (!match) return
   selectedCard.value = name
-  const loser = state.value!.currentMatch!.find(n => n !== name)!
+  const loser = match.find(n => n !== name)
+  if (!loser) return
   pickDuel(name, loser)
 }
 

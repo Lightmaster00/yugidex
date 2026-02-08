@@ -77,6 +77,11 @@ export interface TournamentState {
     loser?: string
     /** Deltas Elo appliqués (pour undo exact) */
     eloDelta?: { name: string; delta: number }[]
+    /** Snapshot pour restauration lors d'un undo de transition de phase */
+    prevGroups?: string[][] | null
+    prevPhasePool?: string[]
+    prevGroupsTotal?: number
+    prevPhaseRound?: number
   }
 }
 
