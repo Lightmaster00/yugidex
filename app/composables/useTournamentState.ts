@@ -268,11 +268,19 @@ export function useTournamentState () {
     if (state.value) downloadTop10Csv(state.value)
   }
 
+  const START_TIMEOUT_MS = 90_000
+
   async function startTournament () {
     loading.value = true
     error.value = null
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error('Le chargement a pris trop de temps. Réessayez (connexion lente ou API occupée).')),
+        START_TIMEOUT_MS
+      )
+    })
     try {
-      await loadFromApi()
+      await Promise.race([loadFromApi(), timeoutPromise])
     } catch (e) {
       error.value = (e as Error)?.message ?? 'Une erreur est survenue. Réessayez.'
     } finally {
