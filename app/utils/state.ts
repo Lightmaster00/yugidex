@@ -1,12 +1,16 @@
 import type { TournamentState, ArchetypeState } from '~/types/tournament'
 import {
   INITIAL_ELO,
-  PHASE2_THRESHOLD_DEFAULT,
-  CONVERGENCE_WINDOW,
-  CONVERGENCE_MAX_AVG_CHANGE
+  COVERAGE_ROUND_COUNT,
+  REFINEMENT_POOL_FRACTION,
+  SWISS_POOL_SIZE,
+  SWISS_ROUND_COUNT,
+  K_GROUP_DAMPENED,
+  K_GROUP_FULL,
+  K_SWISS
 } from '~/types/tournament'
-import { applyElo } from '~/utils/elo'
-import { getNextMatch as getNextMatch1v1, matchKey } from '~/utils/matchmaking'
+import { applyElo, applyGroupElo } from '~/utils/elo'
+import { matchKey, buildCoverageGroups, buildEloProximityGroups, getNextMatchSwiss } from '~/utils/matchmaking'
 
 const STORAGE_KEY = 'yugidex-tournament'
 
@@ -16,47 +20,6 @@ function uuid (): string {
   )
 }
 
-/**
- * Crée l'état initial.
- * Si phase2Threshold === 0 : mode unique (duels 1v1 fixe, pool complet), phase = 'phase2' dès le départ.
- */
-export function createInitialState (
-  archetypeNames: string[],
-  seed: number,
-  phase2Threshold: number = PHASE2_THRESHOLD_DEFAULT
-): TournamentState {
-  const archetypes: Record<string, ArchetypeState> = {}
-  for (const name of archetypeNames) {
-    archetypes[name] = {
-      elo: INITIAL_ELO,
-      wins: 0,
-      losses: 0,
-      eliminated: false
-    }
-  }
-  const base: TournamentState = {
-    runId: uuid(),
-    createdAt: new Date().toISOString(),
-    seed,
-    phase: 'phase1',
-    phase2Threshold,
-    archetypes,
-    remainingNames: [...archetypeNames],
-    matchesPlayed: [],
-    currentMatch: null,
-    round: 0,
-    initialPoolSize: archetypeNames.length,
-    eloHistory: [],
-    convergenceRounds: CONVERGENCE_WINDOW
-  }
-  if (phase2Threshold === 0) {
-    base.winnersPhase1 = []
-    base.losersPhase1 = []
-    base.winnersPhase2 = []
-  }
-  return base
-}
-
 /** Mélange Fisher-Yates avec seed (pour reproductibilité). */
 export function seededShuffle<T> (arr: T[], seed: number): T[] {
   const out = [...arr]
@@ -64,269 +27,283 @@ export function seededShuffle<T> (arr: T[], seed: number): T[] {
   for (let i = out.length - 1; i > 0; i--) {
     s = (s * 1103515245 + 12345) & 0x7fffffff
     const j = s % (i + 1)
-    ;[out[i], out[j]] = [out[j], out[i]]
+    ;[out[i], out[j]] = [out[j]!, out[i]!]
   }
   return out
 }
 
-/** Prochain match phase 1 : 4 archétypes (ou 3 en mode 4→3→2 si reste 3). Si <3 restants, null. */
-export function getNextMatchPhase1 (state: TournamentState): string[] | null {
-  const pool = state.remainingNames.filter(
-    n => !state.archetypes[n]?.eliminated
-  )
-  if (pool.length < 3) return null
-  if (state.phase2Threshold !== 0 && pool.length <= 4) return null
-  const shuffled = seededShuffle(pool, state.seed + state.round)
-  const size = state.phase2Threshold === 0 && pool.length === 3 ? 3 : 4
-  return shuffled.slice(0, size)
+/**
+ * Crée l'état initial et pré-calcule les groupes du premier round de Phase 1.
+ */
+export function createInitialState (
+  archetypeNames: string[],
+  seed: number
+): TournamentState {
+  const archetypes: Record<string, ArchetypeState> = {}
+  for (const name of archetypeNames) {
+    archetypes[name] = {
+      elo: INITIAL_ELO,
+      wins: 0,
+      losses: 0
+    }
+  }
+  const pool = [...archetypeNames]
+  const groups = buildCoverageGroups(pool, archetypes, seed)
+  return {
+    runId: uuid(),
+    createdAt: new Date().toISOString(),
+    seed,
+    phase: 'phase1',
+    archetypes,
+    remainingNames: pool,
+    matchesPlayed: [],
+    currentMatch: null,
+    round: 0,
+    initialPoolSize: archetypeNames.length,
+    phaseRound: 0,
+    groupsCompleted: 0,
+    groupsTotal: groups.length,
+    currentRoundGroups: groups,
+    phasePool: pool
+  }
 }
 
-/** Phase 2 en mode 4→3→2 : 3 archétypes (perdants phase 1) tirés au sort. */
-export function getNextMatchPhase2_3way (state: TournamentState): string[] | null {
-  const pool = state.remainingNames
-  if (pool.length < 3) return null
-  const shuffled = seededShuffle(pool, state.seed + state.round + 10000)
-  return shuffled.slice(0, 3)
+/** Retourne le top N archétypes triés par Elo desc. */
+export function getTopByElo (
+  archetypes: Record<string, ArchetypeState>,
+  pool: string[],
+  count: number
+): string[] {
+  return [...pool]
+    .sort((a, b) => (archetypes[b]?.elo ?? 0) - (archetypes[a]?.elo ?? 0))
+    .slice(0, count)
 }
 
-/** Après un duel 4-way : 1 gagnant, 3 éliminés (ou en mode 4→3→2 : 3 vont en phase 2). */
-export function applyPhase1Result (
+/**
+ * Applique le résultat d'un groupe (phase 1 ou 2).
+ * Retourne le nouvel état avec transition de phase/round si nécessaire.
+ */
+export function applyGroupResult (
   state: TournamentState,
   winner: string,
   losers: string[]
 ): TournamentState {
-  const next = { ...state }
-  next.archetypes = { ...state.archetypes }
-  next.lastMatchResult = {
-    phase: 'phase1',
-    match: [...(state.currentMatch ?? [])],
-    winner,
-    losers: [...losers]
-  }
-  next.round = state.round + 1
-  next.currentMatch = null
+  const K = state.phase === 'phase1' ? K_GROUP_DAMPENED : K_GROUP_FULL
+  const winnerEntry = state.archetypes[winner]!
+  const loserElos = losers.map(l => state.archetypes[l]?.elo ?? INITIAL_ELO)
+  const { newWinner, newLosers } = applyGroupElo(winnerEntry.elo, loserElos, K)
 
-  if (state.phase2Threshold === 0) {
-    next.winnersPhase1 = [...(state.winnersPhase1 ?? []), winner]
-    next.losersPhase1 = [...(state.losersPhase1 ?? []), ...losers]
-    const toRemove = [winner, ...losers]
-    next.remainingNames = state.remainingNames.filter(n => !toRemove.includes(n))
-    next.archetypes[winner] = {
-      ...state.archetypes[winner],
-      wins: (state.archetypes[winner]?.wins ?? 0) + 1
+  const nextArchetypes = { ...state.archetypes }
+  const eloDelta: { name: string; delta: number }[] = []
+
+  nextArchetypes[winner] = {
+    ...winnerEntry,
+    elo: newWinner,
+    wins: winnerEntry.wins + 1
+  }
+  eloDelta.push({ name: winner, delta: newWinner - winnerEntry.elo })
+
+  for (let i = 0; i < losers.length; i++) {
+    const l = losers[i]!
+    const entry = state.archetypes[l]!
+    nextArchetypes[l] = {
+      ...entry,
+      elo: newLosers[i]!,
+      losses: entry.losses + 1
     }
-    for (const l of losers) {
-      next.archetypes[l] = {
-        ...state.archetypes[l],
-        losses: (state.archetypes[l]?.losses ?? 0) + 1
-      }
+    eloDelta.push({ name: l, delta: newLosers[i]! - entry.elo })
+  }
+
+  const groupsCompleted = state.groupsCompleted + 1
+  const next: TournamentState = {
+    ...state,
+    archetypes: nextArchetypes,
+    round: state.round + 1,
+    groupsCompleted,
+    currentMatch: null,
+    lastMatchResult: {
+      phase: state.phase as 'phase1' | 'phase2',
+      match: [...(state.currentMatch ?? [])],
+      winner,
+      losers: [...losers],
+      eloDelta
     }
-    if (next.remainingNames.length === 0 || next.remainingNames.length <= 3) {
-      if (next.remainingNames.length > 0) {
-        next.losersPhase1 = [...(next.losersPhase1 ?? []), ...next.remainingNames]
-        next.remainingNames = []
-      }
+  }
+
+  // Round terminé ?
+  if (groupsCompleted >= state.groupsTotal) {
+    return advanceToNextPhaseRound(next)
+  }
+  return next
+}
+
+/**
+ * Avance vers le prochain round ou la prochaine phase quand le round courant est fini.
+ */
+function advanceToNextPhaseRound (state: TournamentState): TournamentState {
+  const next = { ...state }
+
+  if (state.phase === 'phase1') {
+    const nextPhaseRound = state.phaseRound + 1
+    if (nextPhaseRound >= COVERAGE_ROUND_COUNT) {
+      // → Phase 2 : top 50%
+      const poolSize = Math.max(4, Math.ceil(state.remainingNames.length * REFINEMENT_POOL_FRACTION))
+      const pool = getTopByElo(state.archetypes, state.remainingNames, poolSize)
+      const groups = buildEloProximityGroups(pool, state.archetypes, state.seed + 5000)
       next.phase = 'phase2'
-      next.remainingNames = [...(next.losersPhase1 ?? [])]
+      next.phaseRound = 0
+      next.groupsCompleted = 0
+      next.groupsTotal = groups.length
+      next.currentRoundGroups = groups
+      next.phasePool = pool
+      return next
     }
+    // Round suivant en phase 1 : groupes par proximité Elo
+    const groups = buildEloProximityGroups(
+      state.remainingNames,
+      state.archetypes,
+      state.seed + nextPhaseRound * 1000
+    )
+    next.phaseRound = nextPhaseRound
+    next.groupsCompleted = 0
+    next.groupsTotal = groups.length
+    next.currentRoundGroups = groups
     return next
   }
 
-  next.remainingNames = state.remainingNames.filter(
-    n => n !== losers[0] && n !== losers[1] && n !== losers[2]
-  )
-  next.archetypes[winner] = {
-    ...state.archetypes[winner],
-    wins: (state.archetypes[winner]?.wins ?? 0) + 1
-  }
-  for (const l of losers) {
-    next.archetypes[l] = {
-      ...state.archetypes[l],
-      eliminated: true,
-      losses: (state.archetypes[l]?.losses ?? 0) + 1
-    }
-  }
-  if (next.remainingNames.length <= state.phase2Threshold) {
-    next.phase = 'phase2'
-    next.remainingNames = next.remainingNames.filter(
-      n => !next.archetypes[n]?.eliminated
-    )
-  }
-  return next
-}
-
-/** Après un duel 3-way (phase 2 mode 4→3→2) : 1 gagnant, 2 éliminés. Le gagnant rejoint les finalistes. */
-export function applyPhase2_3wayResult (
-  state: TournamentState,
-  winner: string,
-  losers: string[]
-): TournamentState {
-  const next = { ...state }
-  next.archetypes = { ...state.archetypes }
-  next.winnersPhase2 = [...(state.winnersPhase2 ?? []), winner]
-  next.remainingNames = state.remainingNames.filter(
-    n => n !== winner && n !== losers[0] && n !== losers[1]
-  )
-  next.archetypes[winner] = {
-    ...state.archetypes[winner],
-    wins: (state.archetypes[winner]?.wins ?? 0) + 1
-  }
-  for (const l of losers) {
-    next.archetypes[l] = {
-      ...state.archetypes[l],
-      eliminated: true,
-      losses: (state.archetypes[l]?.losses ?? 0) + 1
-    }
-  }
-  next.round = state.round + 1
-  next.currentMatch = null
-  next.lastMatchResult = {
-    phase: 'phase2_3way',
-    match: [...(state.currentMatch ?? [])],
-    winner,
-    losers: [...losers]
-  }
-  if (next.remainingNames.length === 0) {
+  if (state.phase === 'phase2') {
+    // → Phase 3 : top 24 en Swiss
+    const poolSize = Math.min(SWISS_POOL_SIZE, state.phasePool.length)
+    const pool = getTopByElo(state.archetypes, state.phasePool, poolSize)
     next.phase = 'phase3'
-    next.remainingNames = [...(next.winnersPhase1 ?? []), ...(next.winnersPhase2 ?? [])]
+    next.phaseRound = 0
+    next.groupsCompleted = 0
+    next.groupsTotal = 0
+    next.currentRoundGroups = null
+    next.phasePool = pool
+    next.matchesPlayed = []
+    return next
   }
-  return next
+
+  return state
 }
 
-/** Après un duel 1v1 : applique Elo et enregistre le match. */
+/** Applique le résultat d'un duel 1v1 (Phase 3 Swiss). */
 export function applyEloResult (
   state: TournamentState,
   winner: string,
   loser: string
 ): TournamentState {
-  const next = { ...state }
-  next.archetypes = { ...state.archetypes }
   const w = state.archetypes[winner] ?? { elo: INITIAL_ELO, wins: 0, losses: 0 }
   const l = state.archetypes[loser] ?? { elo: INITIAL_ELO, wins: 0, losses: 0 }
-  const { newWinner, newLoser } = applyElo(w.elo, l.elo)
-  next.archetypes[winner] = {
-    ...w,
-    elo: newWinner,
-    wins: w.wins + 1
-  }
-  next.archetypes[loser] = {
-    ...l,
-    elo: newLoser,
-    losses: l.losses + 1
-  }
-  next.matchesPlayed = [...state.matchesPlayed, matchKey(winner, loser)]
-  next.round = state.round + 1
-  next.currentMatch = null
-  next.lastMatchResult = {
-    phase: 'phase2',
-    match: [...(state.currentMatch ?? [])],
-    winner,
-    loser
-  }
+  const { newWinner, newLoser } = applyElo(w.elo, l.elo, K_SWISS)
 
-  const remaining = state.remainingNames
-  const eloSnapshot = remaining.map(
-    n => next.archetypes[n]?.elo ?? INITIAL_ELO
-  )
-  next.eloHistory = [...(state.eloHistory ?? []), eloSnapshot].slice(
-    -CONVERGENCE_WINDOW
-  )
-  return next
+  const nextArchetypes = { ...state.archetypes }
+  nextArchetypes[winner] = { ...w, elo: newWinner, wins: w.wins + 1 }
+  nextArchetypes[loser] = { ...l, elo: newLoser, losses: l.losses + 1 }
+
+  const eloDelta = [
+    { name: winner, delta: newWinner - w.elo },
+    { name: loser, delta: newLoser - l.elo }
+  ]
+
+  return {
+    ...state,
+    archetypes: nextArchetypes,
+    matchesPlayed: [...state.matchesPlayed, matchKey(winner, loser)],
+    round: state.round + 1,
+    currentMatch: null,
+    lastMatchResult: {
+      phase: 'phase3',
+      match: [...(state.currentMatch ?? [])],
+      winner,
+      loser,
+      eloDelta
+    }
+  }
 }
 
-/** Annule le dernier choix (phase 1 ou 2). Retourne l'état réverti ou null si rien à annuler. */
+/** Vérifie si Phase 3 est terminée (nombre de rounds Swiss atteint). */
+export function isPhase3Done (state: TournamentState): boolean {
+  if (state.phase !== 'phase3') return false
+  const pool = state.phasePool
+  const matchesPerRound = Math.floor(pool.length / 2)
+  if (matchesPerRound === 0) return true
+  const totalSwissMatches = matchesPerRound * SWISS_ROUND_COUNT
+  return state.matchesPlayed.length >= totalSwissMatches
+}
+
+/** Annule le dernier choix. Retourne l'état réverti ou null si rien à annuler. */
 export function undoLastResult (state: TournamentState): TournamentState | null {
   const last = state.lastMatchResult
   if (!last) return null
-  const prev = { ...state }
-  prev.archetypes = { ...state.archetypes }
-  prev.lastMatchResult = undefined
 
-  if (last.phase === 'phase1' && last.losers && last.losers.length >= 2) {
-    if (state.phase2Threshold === 0) {
-      prev.winnersPhase1 = (state.winnersPhase1 ?? []).slice(0, -1)
-      prev.losersPhase1 = (state.losersPhase1 ?? []).slice(0, -last.losers!.length)
-      prev.remainingNames = [...state.remainingNames, last.winner, ...last.losers]
-    } else {
-      prev.remainingNames = [...state.remainingNames, ...last.losers]
+  const prev: TournamentState = {
+    ...state,
+    archetypes: { ...state.archetypes },
+    lastMatchResult: undefined,
+    round: Math.max(0, state.round - 1)
+  }
+
+  // Restaurer les Elo via les deltas sauvegardés
+  if (last.eloDelta) {
+    for (const { name, delta } of last.eloDelta) {
+      const entry = state.archetypes[name]
+      if (entry) {
+        prev.archetypes[name] = { ...entry, elo: entry.elo - delta }
+      }
     }
+  }
+
+  if ((last.phase === 'phase1' || last.phase === 'phase2') && last.losers) {
+    // Undo group result
     prev.archetypes[last.winner] = {
-      ...state.archetypes[last.winner],
-      wins: Math.max(0, (state.archetypes[last.winner]?.wins ?? 0) - 1)
+      ...prev.archetypes[last.winner]!,
+      wins: Math.max(0, prev.archetypes[last.winner]!.wins - 1)
     }
     for (const l of last.losers) {
       prev.archetypes[l] = {
-        ...state.archetypes[l],
-        eliminated: false,
-        losses: Math.max(0, (state.archetypes[l]?.losses ?? 0) - 1)
+        ...prev.archetypes[l]!,
+        losses: Math.max(0, prev.archetypes[l]!.losses - 1)
       }
     }
-    prev.round = Math.max(0, state.round - 1)
-    prev.phase = 'phase1'
+    // Remettre le match en cours et décrémenter groupsCompleted
     prev.currentMatch = last.match
+    prev.groupsCompleted = Math.max(0, state.groupsCompleted - 1)
+    // Si on était passé à la phase suivante, revenir
+    if (state.phase !== last.phase) {
+      prev.phase = last.phase
+      prev.phasePool = state.phase === 'phase2' ? state.remainingNames : state.phasePool
+      // On doit reconstituer les groupes du round précédent : on remet le dernier
+      // Comme on ne stocke qu'un seul round de groupes, on se contente de revenir
+      // au dernier groupe du round (approximation suffisante car undo = 1 pas)
+      if (last.phase === 'phase1') {
+        prev.phaseRound = Math.max(0, (state.phase === 'phase2' ? COVERAGE_ROUND_COUNT : state.phaseRound) - 1)
+      }
+    }
     return prev
   }
 
-  if (last.phase === 'phase2_3way' && last.losers?.length === 2) {
-    prev.winnersPhase2 = (state.winnersPhase2 ?? []).slice(0, -1)
-    prev.remainingNames = [...state.remainingNames, last.winner, ...last.losers]
+  if (last.phase === 'phase3' && last.loser) {
+    // Undo 1v1 Swiss
     prev.archetypes[last.winner] = {
-      ...state.archetypes[last.winner],
-      wins: Math.max(0, (state.archetypes[last.winner]?.wins ?? 0) - 1)
-    }
-    for (const l of last.losers) {
-      prev.archetypes[l] = {
-        ...state.archetypes[l],
-        eliminated: false,
-        losses: Math.max(0, (state.archetypes[l]?.losses ?? 0) - 1)
-      }
-    }
-    prev.round = Math.max(0, state.round - 1)
-    prev.phase = 'phase2'
-    prev.currentMatch = last.match
-    return prev
-  }
-
-  if (last.phase === 'phase2' && last.loser) {
-    const w = state.archetypes[last.winner]
-    const l = state.archetypes[last.loser]
-    if (!w || !l) return null
-    const eWinner = 1 / (1 + Math.pow(10, (l.elo - w.elo) / 400))
-    const eLoser = 1 - eWinner
-    const K = 24
-    prev.archetypes[last.winner] = {
-      ...w,
-      elo: Math.round(w.elo - K * (1 - eWinner)),
-      wins: Math.max(0, w.wins - 1)
+      ...prev.archetypes[last.winner]!,
+      wins: Math.max(0, prev.archetypes[last.winner]!.wins - 1)
     }
     prev.archetypes[last.loser] = {
-      ...l,
-      elo: Math.round(l.elo + K * (1 - eWinner)),
-      losses: Math.max(0, l.losses - 1)
+      ...prev.archetypes[last.loser]!,
+      losses: Math.max(0, prev.archetypes[last.loser]!.losses - 1)
     }
     prev.matchesPlayed = state.matchesPlayed.slice(0, -1)
-    prev.round = Math.max(0, state.round - 1)
-    prev.eloHistory = (state.eloHistory ?? []).slice(0, -1)
     prev.currentMatch = last.match
+    // Si on était passé à 'finished', revenir à phase3
+    if (state.phase === 'finished') {
+      prev.phase = 'phase3'
+    }
     return prev
   }
 
   return null
-}
-
-/** Vérifie si les Elo ont convergé (variation moyenne faible sur la fenêtre). */
-export function hasConverged (state: TournamentState): boolean {
-  const history = state.eloHistory ?? []
-  if (history.length < 2) return false
-  const prev = history[history.length - 2]!
-  const curr = history[history.length - 1]!
-  if (prev.length !== curr.length) return false
-  let sum = 0
-  for (let i = 0; i < prev.length; i++) {
-    sum += Math.abs((curr[i]! ?? 0) - (prev[i]! ?? 0))
-  }
-  const avg = prev.length ? sum / prev.length : 0
-  return avg <= CONVERGENCE_MAX_AVG_CHANGE
 }
 
 export function saveState (state: TournamentState): void {

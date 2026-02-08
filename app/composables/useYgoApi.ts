@@ -1,16 +1,84 @@
 import type { CardInfoApiResponse, YgoCard } from '~/types/api'
 import type { RepresentativeCard } from '~/types/tournament'
-import { pickRepresentativeCards, pickRepresentativeCard, getCardImageUrl, getFullCardImageUrl } from '~/utils/representativeCard'
+import { pickRepresentativeCards, pickRepresentativeCard, getCardImageUrl, getFullCardImageUrl, getCardCategory, hasValidRepresentatives } from '~/utils/representativeCard'
 import { clearCachedArchetypes } from '~/utils/archetypeCache'
 
 const ARCHETYPES_URL = 'https://db.ygoprodeck.com/api/v7/archetypes.php'
 const CARDINFO_URL = 'https://db.ygoprodeck.com/api/v7/cardinfo.php'
 
 const TCG_FORMAT = 'tcg'
-const MIN_REPRESENTATIVE_CARDS = 5
 
-/** Archétypes « fourre-tout » : nom trop générique, cartes sans vraie cohérence (ex. Mask = Mask Beast + Mask of Darkness). */
-export const ARCHETYPE_BLOCKLIST = new Set<string>(['Mask'])
+/**
+ * Archétypes « fourre-tout » ou trop génériques.
+ * Ce ne sont pas de vraies "familles" avec leur identité et leur logique de deck.
+ * Inclut : mécaniques de jeu, types de monstres utilisés comme archétypes,
+ * groupements éditoriaux, et noms trop vagues.
+ */
+export const ARCHETYPE_BLOCKLIST = new Set<string>([
+  // Mécaniques d'invocation / types de carte
+  'Fusion',
+  'Synchro',
+  'Xyz',
+  'Pendulum',
+  'Overlay',
+  'Rank-Up-Magic',
+  'Polymerization',
+  'Trap Hole',
+  'Trap Monster',
+  'Ritual',
+  'Link',
+  'Tuner',
+
+  // Groupements méta / éditoriaux
+  'Dark counterpart',
+  'Recolored counterpart',
+  'Zombie counterpart',
+  'Signature move',
+  'Field Searcher',
+  'Attribute Summoner',
+  'Uniform Nomenclature',
+  'Konami Arcade Games',
+  'Fan-Made Cards',
+  '25th Anniversary Monsters',
+  'Celebration',
+  "PaniK's monsters",
+  'Cosmic Synchro Monster',
+  'Normal Monster',
+  'Flip monster',
+  'Spirit monster',
+  'Union monster',
+  'Gemini monster',
+
+  // Noms trop génériques — pas de vraie identité de deck
+  'Magician',
+  'Warrior',
+  'Knight',
+  'Fairy',
+  'Guardian',
+  'Star',
+  'Mask',
+  'King',
+  'Dragon',
+  'Beast',
+  'Charmer',
+  'Familiar-Possessed',
+
+  // Séries lâches sans cohérence de deck
+  'Forbidden',
+  'Solemn',
+  'Book of',
+  'Hole',
+  'Jar',
+  'Token',
+  'Mirror Force',
+  'Virus',
+  'Legacy of the Duelist',
+
+  // Séries de cartes génériques (pas de vrai deck)
+  'Nimble',
+  'Dice',
+  'Clear',
+])
 
 export type CardLanguage = 'en' | 'fr' | 'de' | 'it' | 'pt'
 
@@ -106,11 +174,10 @@ export async function fetchCardsForArchetype (archetypeName: string): Promise<Yg
   }
 }
 
-/** Vrai si l'archétype a au moins 2 cartes représentatives au bon format (art carré). */
+/** Vrai si l'archétype a assez de cartes (>=6, au moins un monstre). */
 export async function hasEnoughRepresentatives (archetypeName: string): Promise<boolean> {
   const cards = await fetchCardsForArchetype(archetypeName)
-  const top = pickRepresentativeCards(cards, archetypeName, 10)
-  return top.length >= MIN_REPRESENTATIVE_CARDS
+  return hasValidRepresentatives(cards, archetypeName)
 }
 
 const BATCH_SIZE = 18
@@ -134,13 +201,13 @@ export async function filterArchetypesWithEnoughRepresentatives (
   return valid
 }
 
-/** Charge les 3–4 cartes les plus emblématiques (format carré). Retourne null si moins de 2. */
+/** Charge les cartes représentatives (6-12). Retourne null si validation échoue. */
 export async function loadRepresentativesForArchetype (
   archetypeName: string
 ): Promise<{ representativeCards: RepresentativeCard[]; representativeIndex: number } | null> {
   const cards = await fetchCardsForArchetype(archetypeName)
-  const top = pickRepresentativeCards(cards, archetypeName, 10)
-  if (top.length < MIN_REPRESENTATIVE_CARDS) return null
+  if (!hasValidRepresentatives(cards, archetypeName)) return null
+  const top = pickRepresentativeCards(cards, archetypeName)
   const representativeCards: RepresentativeCard[] = top.map(c => ({
     id: c.id,
     imageUrl: getCardImageUrl(c),
@@ -151,7 +218,8 @@ export async function loadRepresentativesForArchetype (
     level: c.level,
     race: c.race,
     atk: c.atk,
-    def: c.def
+    def: c.def,
+    category: getCardCategory(c)
   }))
   /* Afficher par défaut la carte la plus importante (index 0, déjà triée par score) */
   const representativeIndex = 0

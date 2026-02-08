@@ -58,18 +58,18 @@ const translations: Record<string, Record<CardLanguage, string>> = {
     pt: 'Próximo duelo…'
   },
   'phase1.badge': {
-    en: 'Phase 1 — Elimination',
-    fr: 'Phase 1 — Élimination',
-    de: 'Phase 1 — Eliminierung',
-    it: 'Fase 1 — Eliminazione',
-    pt: 'Fase 1 — Eliminação'
+    en: 'Phase 1 — Coverage',
+    fr: 'Phase 1 — Couverture',
+    de: 'Phase 1 — Abdeckung',
+    it: 'Fase 1 — Copertura',
+    pt: 'Fase 1 — Cobertura'
   },
   'phase2.badge': {
-    en: 'Phase 2 — Elo Ranking',
-    fr: 'Phase 2 — Classement Elo',
-    de: 'Phase 2 — Elo-Rangliste',
-    it: 'Fase 2 — Classifica Elo',
-    pt: 'Fase 2 — Ranking Elo'
+    en: 'Phase 2 — Refinement',
+    fr: 'Phase 2 — Raffinement',
+    de: 'Phase 2 — Verfeinerung',
+    it: 'Fase 2 — Raffinamento',
+    pt: 'Fase 2 — Refinamento'
   },
   'duel.instruction': {
     en: 'Tap the card',
@@ -168,6 +168,34 @@ const translations: Record<string, Record<CardLanguage, string>> = {
     de: 'Schweizer Runde',
     it: 'Round svizzero',
     pt: 'Rodada suíça'
+  },
+  'cardCategory.extra': {
+    en: 'Extra Deck',
+    fr: 'Extra Deck',
+    de: 'Extra-Deck',
+    it: 'Extra Deck',
+    pt: 'Deck Extra'
+  },
+  'cardCategory.main': {
+    en: 'Main Deck Monster',
+    fr: 'Monstre (deck principal)',
+    de: 'Main-Deck-Monster',
+    it: 'Mostro (deck principale)',
+    pt: 'Monstro (deck principal)'
+  },
+  'cardCategory.spell': {
+    en: 'Spell',
+    fr: 'Magie',
+    de: 'Zauber',
+    it: 'Magia',
+    pt: 'Magia'
+  },
+  'cardCategory.trap': {
+    en: 'Trap',
+    fr: 'Piège',
+    de: 'Falle',
+    it: 'Trappola',
+    pt: 'Armadilha'
   }
 }
 

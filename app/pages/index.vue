@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { t } from '~/utils/i18n'
+import { COVERAGE_ROUND_COUNT, SWISS_ROUND_COUNT } from '~/types/tournament'
+import type { RepresentativeCategory } from '~/types/tournament'
 const {
   state,
   loading,
@@ -9,9 +11,8 @@ const {
   canUndo,
   init,
   startTournament,
-  pickPhase1,
-  pickPhase2,
-  pickPhase2_3way,
+  pickGroup,
+  pickDuel,
   finish,
   undo,
   cycleArchetypeImage,
@@ -23,11 +24,54 @@ const {
 const i = (key: string) => t(key, 'en')
 const selectedCard = ref<string | null>(null)
 
+/** Catégorie affichée pour comparer les archétypes entre eux. */
+const CATEGORY_ORDER: RepresentativeCategory[] = ['extra', 'main', 'spell', 'trap']
+const matchDisplayCategoryIdx = ref(0)
+
+/**
+ * Catégories présentes dans AU MOINS un archétype du match.
+ * Chaque archétype affichera sa carte de cette catégorie s'il en a une, sinon sa meilleure carte.
+ * Cela permet de toujours cycler Extra → Main → Spell → Trap même si un archétype n'a pas d'Extra Deck.
+ */
+const availableCategories = computed<RepresentativeCategory[]>(() => {
+  const match = state.value?.currentMatch
+  if (!match?.length) return CATEGORY_ORDER
+  return CATEGORY_ORDER.filter(cat =>
+    match.some(name => {
+      const cards = state.value?.archetypes[name]?.representativeCards
+      return cards?.some(c => c.category === cat)
+    })
+  )
+})
+
+const matchDisplayCategory = computed<RepresentativeCategory>(() => {
+  const avail = availableCategories.value
+  if (!avail.length) return 'main'
+  const idx = matchDisplayCategoryIdx.value % avail.length
+  return avail[idx]!
+})
+
+/** Label de la catégorie affichée. */
+function getCurrentMatchCardCategoryLabel (): string | null {
+  return i('cardCategory.' + matchDisplayCategory.value)
+}
+
+/**
+ * Trouve la carte à afficher pour un archétype.
+ * En match : cherche la 1ère carte de la catégorie demandée. Si aucune, fallback sur la 1ère carte.
+ * Hors match : utilise l'index de représentation courant.
+ */
 function getCurrentRepresentative (archetypeName: string) {
   const entry = state.value?.archetypes[archetypeName]
   const cards = entry?.representativeCards
-  const idx = entry?.representativeIndex ?? 0
-  return cards?.[idx] ?? cards?.[0]
+  if (!cards?.length) return undefined
+  const inMatch = state.value?.currentMatch?.includes(archetypeName)
+  if (inMatch) {
+    const cat = matchDisplayCategory.value
+    const found = cards.find(c => c.category === cat)
+    return found ?? cards[0]
+  }
+  return cards[entry?.representativeIndex ?? 0] ?? cards[0]
 }
 
 function getCurrentCardName (archetypeName: string): string {
@@ -38,69 +82,84 @@ function getCurrentFrameType (archetypeName: string): string | undefined {
   return getCurrentRepresentative(archetypeName)?.frameType
 }
 
-function progressPct (): number {
-  const s = state.value
-  if (!s?.initialPoolSize || s.phase !== 'phase1') return 0
-  const remaining = s.remainingNames?.length ?? 0
-  const initial = s.initialPoolSize ?? (remaining || 1)
-  return Math.round(100 * (1 - remaining / initial))
+/** Phase 1/2 : l'utilisateur choisit le gagnant dans un groupe. */
+function selectGroup (name: string) {
+  selectedCard.value = name
+  const losers = state.value!.currentMatch!.filter(n => n !== name)
+  pickGroup(name, losers)
 }
 
-function selectPhase1 (name: string) {
+/** Phase 3 : l'utilisateur choisit le gagnant dans un duel 1v1. */
+function selectDuel (name: string) {
   selectedCard.value = name
-  pickPhase1(name, state.value!.currentMatch!.filter(n => n !== name))
-}
-
-function selectPhase2 (name: string) {
-  selectedCard.value = name
-  pickPhase2(name, state.value!.currentMatch!.find(n => n !== name)!)
-}
-
-function selectPhase2_3way (name: string) {
-  selectedCard.value = name
-  const others = state.value!.currentMatch!.filter(n => n !== name)
-  pickPhase2_3way(name, others)
+  const loser = state.value!.currentMatch!.find(n => n !== name)!
+  pickDuel(name, loser)
 }
 
 const duelA = computed(() => state.value?.currentMatch?.[0] ?? '')
 const duelB = computed(() => state.value?.currentMatch?.[1] ?? '')
 
+/** Phase 1/2 : groupes de 2-4. */
+const isGroupMode = computed(
+  () =>
+    (state.value?.phase === 'phase1' || state.value?.phase === 'phase2') &&
+    (state.value?.currentMatch?.length ?? 0) >= 2
+)
+
+/** Phase 3 : duel 1v1. */
 const isDuelMode = computed(
   () =>
-    (state.value?.phase === 'phase3' ||
-      (state.value?.phase === 'phase2' && state.value?.phase2Threshold !== 0)) &&
+    state.value?.phase === 'phase3' &&
     state.value?.currentMatch?.length === 2
 )
 
-/** Phase 1 couverture : pill "Choix X / 60". */
-const isPhase1Coverage = computed(
-  () => state.value?.phase === 'phase1' && state.value?.phase2Threshold === 0
-)
-
-const isPhase2_3way = computed(
-  () =>
-    state.value?.phase === 'phase2' &&
-    state.value?.phase2Threshold === 0 &&
-    state.value?.currentMatch?.length === 3
-)
-
-/** Au moins un archétype du match en cours a plusieurs cartes représentatives. */
-const canCycleAllCards = computed(() =>
-  state.value?.currentMatch?.some(
-    n => (state.value!.archetypes[n]?.representativeCards?.length ?? 0) > 1
-  )
-)
+/** Affiche le bouton "changer carte" si au moins 2 catégories sont disponibles pour tous les archétypes du match. */
+const canCycleAllCards = computed(() => availableCategories.value.length >= 2)
 
 function cycleAllCards () {
-  state.value?.currentMatch?.forEach(n => cycleArchetypeImage(n))
+  const len = availableCategories.value.length || 1
+  matchDisplayCategoryIdx.value = (matchDisplayCategoryIdx.value + 1) % len
 }
 
-/** Tour suisse (1..4) pour l’affichage. */
-const swissRoundDisplay = computed(() => {
+/** Texte du badge de phase. */
+const phaseBadgeText = computed(() => {
   const s = state.value
-  if (!s || s.phase !== 'phase3') return 1
-  return Math.min(5, Math.floor((s.round ?? 0) / 20) + 1)
+  if (!s) return ''
+  if (s.phase === 'phase1') {
+    return `${i('phase1.badge')} — ${s.groupsCompleted + 1} / ${s.groupsTotal} (${i('round')} ${s.phaseRound + 1}/${COVERAGE_ROUND_COUNT})`
+  }
+  if (s.phase === 'phase2') {
+    return `${i('phase2.badge')} — ${s.groupsCompleted + 1} / ${s.groupsTotal}`
+  }
+  if (s.phase === 'phase3') {
+    const pool = s.phasePool
+    const matchesPerRound = Math.floor(pool.length / 2)
+    const swissRound = matchesPerRound > 0 ? Math.floor(s.matchesPlayed.length / matchesPerRound) + 1 : 1
+    const matchInRound = matchesPerRound > 0 ? (s.matchesPlayed.length % matchesPerRound) + 1 : 1
+    return `${i('swissRound')} ${swissRound}/${SWISS_ROUND_COUNT} — ${matchInRound} / ${matchesPerRound}`
+  }
+  return ''
 })
+
+/** Grid class based on group size. */
+const groupGridClass = computed(() => {
+  const len = state.value?.currentMatch?.length ?? 4
+  if (len <= 2) return 'cards-grid-2'
+  if (len === 3) return 'cards-grid-3'
+  return 'cards-grid-4'
+})
+
+watch(
+  () => [state.value?.currentMatch, state.value?.round] as const,
+  () => {
+    const s = state.value
+    if (s?.currentMatch?.length) {
+      // Toujours commencer par l'Extra Deck (index 0) à chaque nouveau match
+      matchDisplayCategoryIdx.value = 0
+    }
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   init()
@@ -120,29 +179,8 @@ watch(transitioning, (isTransitioning) => {
           <h1 class="logo">{{ i('header.tournament') }}</h1>
         </div>
         <div v-if="state" class="header-right">
-          <div v-if="state.phase === 'phase1' && state.phase2Threshold !== 0" class="progress-block">
-            <div
-              class="progress-bar-wrap"
-              :title="`${state.remainingNames?.length ?? 0} left`"
-            >
-              <div
-                class="progress-bar-fill"
-                :style="{ width: `${progressPct()}%` }"
-              />
-            </div>
-            <span class="progress-pct">{{ progressPct() }}%</span>
-          </div>
-          <span v-else-if="isPhase1Coverage" class="progress-pill">
-            {{ i('phase1.badge') }} — {{ state.remainingNames?.length ?? 0 }} restants
-          </span>
-          <span v-else-if="state.phase === 'phase2' && state.phase2Threshold === 0" class="progress-pill">
-            {{ i('phase2.badge') }} — {{ state.remainingNames?.length ?? 0 }} restants
-          </span>
-          <span v-else-if="state.phase === 'phase3'" class="progress-pill">
-            {{ i('swissRound') }} <strong>{{ swissRoundDisplay }}</strong>
-          </span>
-          <span v-else-if="state.phase === 'phase2'" class="progress-pill">
-            {{ i('round') }} <strong>{{ state.round }}</strong>
+          <span v-if="state.phase !== 'finished'" class="progress-pill">
+            {{ phaseBadgeText }}
           </span>
           <button
             v-if="canUndo"
@@ -194,162 +232,121 @@ watch(transitioning, (isTransitioning) => {
       </div>
 
       <div
-        v-else-if="(state?.phase === 'phase1' && (state.currentMatch?.length === 4 || (state.phase2Threshold === 0 && state.currentMatch?.length === 3))) || isPhase2_3way || isDuelMode"
+        v-else-if="isGroupMode || isDuelMode"
         key="duel-wrap"
         class="duel-wrap"
       >
         <Transition name="duel" mode="out-in">
+          <!-- Phase 1 & 2 : Groups of 2-4 -->
           <section
-            v-if="state?.phase === 'phase1' && (state.currentMatch?.length === 4 || (state.phase2Threshold === 0 && state.currentMatch?.length === 3))"
-            key="phase1"
+            v-if="isGroupMode"
+            :key="`group-${state!.round}`"
             class="duel-section"
           >
-          <div class="duel-header">
-            <span class="duel-phase-badge">{{ i('phase1.badge') }}</span>
-            <p class="duel-instruction">
-              <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
-            </p>
-          </div>
-          <div class="cards-grid" :class="state.currentMatch?.length === 3 ? 'cards-grid-3' : 'cards-grid-4'">
-          <ArchetypeCard
-            v-for="name in state.currentMatch"
-            :key="name"
-            :name="name"
-            :card-name="getCurrentCardName(name)"
-            :frame-type="getCurrentFrameType(name)"
-            :image-url-full="getCurrentRepresentative(name)?.imageUrlFull"
-            :attribute="getCurrentRepresentative(name)?.attribute"
-            :level="getCurrentRepresentative(name)?.level"
-            :race="getCurrentRepresentative(name)?.race"
-            :atk="getCurrentRepresentative(name)?.atk"
-            :def="getCurrentRepresentative(name)?.def"
-            :card-id="state.archetypes[name]?.representativeCardId"
-            :image-url="state.archetypes[name]?.imageUrl"
-            :selected="selectedCard === name"
-            @select="selectPhase1(name)"
-          />
-          </div>
-          <div v-if="canCycleAllCards" class="duel-change-cards-wrap">
-            <button type="button" class="btn btn-outline btn-sm" @click="cycleAllCards">
-              {{ i('btn.changeCard') }}
-            </button>
-          </div>
-        </section>
-
-        <section
-          v-else-if="isPhase2_3way"
-          key="phase2-3way"
-          class="duel-section"
-        >
-          <div class="duel-header">
-            <span class="duel-phase-badge">{{ i('phase2.badge') }}</span>
-            <p class="duel-instruction">
-              <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
-            </p>
-          </div>
-          <div class="cards-grid cards-grid-3">
-            <ArchetypeCard
-              v-for="name in state.currentMatch"
-              :key="name"
-              :name="name"
-              :card-name="getCurrentCardName(name)"
-              :frame-type="getCurrentFrameType(name)"
-              :image-url-full="getCurrentRepresentative(name)?.imageUrlFull"
-              :attribute="getCurrentRepresentative(name)?.attribute"
-              :level="getCurrentRepresentative(name)?.level"
-              :race="getCurrentRepresentative(name)?.race"
-              :atk="getCurrentRepresentative(name)?.atk"
-              :def="getCurrentRepresentative(name)?.def"
-              :card-id="state.archetypes[name]?.representativeCardId"
-              :image-url="state.archetypes[name]?.imageUrl"
-              :selected="selectedCard === name"
-              @select="selectPhase2_3way(name)"
-            />
-          </div>
-          <div v-if="canCycleAllCards" class="duel-change-cards-wrap">
-            <button type="button" class="btn btn-outline btn-sm" @click="cycleAllCards">
-              {{ i('btn.changeCard') }}
-            </button>
-          </div>
-        </section>
-
-        <section
-          v-else-if="isDuelMode"
-          key="phase2"
-          class="duel-section"
-        >
-          <div class="duel-header">
-            <span class="duel-phase-badge">{{ state?.phase === 'phase3' ? i('swissRound') : i('phase2.badge') }}</span>
-            <p class="duel-instruction">
-              <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
-            </p>
-          </div>
-          <div class="duel-arena">
-            <ArchetypeCard
-              :name="duelA"
-              :card-name="getCurrentCardName(duelA)"
-              :frame-type="getCurrentFrameType(duelA)"
-              :image-url-full="getCurrentRepresentative(duelA)?.imageUrlFull"
-              :attribute="getCurrentRepresentative(duelA)?.attribute"
-              :level="getCurrentRepresentative(duelA)?.level"
-              :race="getCurrentRepresentative(duelA)?.race"
-              :atk="getCurrentRepresentative(duelA)?.atk"
-              :def="getCurrentRepresentative(duelA)?.def"
-              :card-id="state!.archetypes[duelA]?.representativeCardId"
-              :image-url="state!.archetypes[duelA]?.imageUrl"
-              :selected="selectedCard === duelA"
-              :show-elo="true"
-              :elo="state!.archetypes[duelA]?.elo ?? 1000"
-              @select="selectPhase2(duelA)"
-            />
-            <div class="duel-vs">
-              <span class="duel-vs__text">VS</span>
+            <div class="duel-header">
+              <span class="duel-phase-badge">{{ phaseBadgeText }}</span>
+              <p class="duel-instruction">
+                <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
+              </p>
             </div>
-            <ArchetypeCard
-              :name="duelB"
-              :card-name="getCurrentCardName(duelB)"
-              :frame-type="getCurrentFrameType(duelB)"
-              :image-url-full="getCurrentRepresentative(duelB)?.imageUrlFull"
-              :attribute="getCurrentRepresentative(duelB)?.attribute"
-              :level="getCurrentRepresentative(duelB)?.level"
-              :race="getCurrentRepresentative(duelB)?.race"
-              :atk="getCurrentRepresentative(duelB)?.atk"
-              :def="getCurrentRepresentative(duelB)?.def"
-              :card-id="state!.archetypes[duelB]?.representativeCardId"
-              :image-url="state!.archetypes[duelB]?.imageUrl"
-              :selected="selectedCard === duelB"
-              :show-elo="true"
-              :elo="state!.archetypes[duelB]?.elo ?? 1000"
-              @select="selectPhase2(duelB)"
-            />
-          </div>
-          <div v-if="canCycleAllCards" class="duel-change-cards-wrap">
-            <button type="button" class="btn btn-outline btn-sm" @click="cycleAllCards">
-              {{ i('btn.changeCard') }}
-            </button>
-          </div>
-          <div class="actions">
-            <button
-              v-if="state?.phase2Threshold === 0"
-              type="button"
-              class="btn btn-outline"
-              @click="finish"
-            >
-              {{ i('btn.finishEarly') }}
-            </button>
-            <button
-              v-else
-              type="button"
-              class="btn btn-outline"
-              @click="finish"
-            >
-              {{ i('btn.finish') }}
-            </button>
-            <button v-if="canUndo" type="button" class="btn btn-prev" @click="undo">
-              {{ i('btn.previous') }}
-            </button>
-          </div>
-        </section>
+            <p v-if="getCurrentMatchCardCategoryLabel()" class="duel-category-label">
+              {{ getCurrentMatchCardCategoryLabel() }}
+            </p>
+            <div class="cards-grid" :class="groupGridClass">
+              <ArchetypeCard
+                v-for="name in state!.currentMatch"
+                :key="name"
+                :name="name"
+                :card-name="getCurrentCardName(name)"
+                :frame-type="getCurrentFrameType(name)"
+                :image-url-full="getCurrentRepresentative(name)?.imageUrlFull"
+                :attribute="getCurrentRepresentative(name)?.attribute"
+                :level="getCurrentRepresentative(name)?.level"
+                :race="getCurrentRepresentative(name)?.race"
+                :atk="getCurrentRepresentative(name)?.atk"
+                :def="getCurrentRepresentative(name)?.def"
+                :card-id="state!.archetypes[name]?.representativeCardId"
+                :image-url="state!.archetypes[name]?.imageUrl"
+                :selected="selectedCard === name"
+                @select="selectGroup(name)"
+              />
+            </div>
+            <div v-if="canCycleAllCards" class="duel-change-cards-wrap">
+              <button type="button" class="btn btn-outline btn-sm" @click="cycleAllCards">
+                {{ i('btn.changeCard') }}
+              </button>
+            </div>
+          </section>
+
+          <!-- Phase 3 : Swiss 1v1 duel -->
+          <section
+            v-else-if="isDuelMode"
+            :key="`duel-${state!.round}`"
+            class="duel-section"
+          >
+            <div class="duel-header">
+              <span class="duel-phase-badge">{{ phaseBadgeText }}</span>
+              <p class="duel-instruction">
+                <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
+              </p>
+            </div>
+            <p v-if="getCurrentMatchCardCategoryLabel()" class="duel-category-label">
+              {{ getCurrentMatchCardCategoryLabel() }}
+            </p>
+            <div class="duel-arena">
+              <ArchetypeCard
+                :name="duelA"
+                :card-name="getCurrentCardName(duelA)"
+                :frame-type="getCurrentFrameType(duelA)"
+                :image-url-full="getCurrentRepresentative(duelA)?.imageUrlFull"
+                :attribute="getCurrentRepresentative(duelA)?.attribute"
+                :level="getCurrentRepresentative(duelA)?.level"
+                :race="getCurrentRepresentative(duelA)?.race"
+                :atk="getCurrentRepresentative(duelA)?.atk"
+                :def="getCurrentRepresentative(duelA)?.def"
+                :card-id="state!.archetypes[duelA]?.representativeCardId"
+                :image-url="state!.archetypes[duelA]?.imageUrl"
+                :selected="selectedCard === duelA"
+                :show-elo="true"
+                :elo="state!.archetypes[duelA]?.elo ?? 1000"
+                @select="selectDuel(duelA)"
+              />
+              <div class="duel-vs">
+                <span class="duel-vs__text">VS</span>
+              </div>
+              <ArchetypeCard
+                :name="duelB"
+                :card-name="getCurrentCardName(duelB)"
+                :frame-type="getCurrentFrameType(duelB)"
+                :image-url-full="getCurrentRepresentative(duelB)?.imageUrlFull"
+                :attribute="getCurrentRepresentative(duelB)?.attribute"
+                :level="getCurrentRepresentative(duelB)?.level"
+                :race="getCurrentRepresentative(duelB)?.race"
+                :atk="getCurrentRepresentative(duelB)?.atk"
+                :def="getCurrentRepresentative(duelB)?.def"
+                :card-id="state!.archetypes[duelB]?.representativeCardId"
+                :image-url="state!.archetypes[duelB]?.imageUrl"
+                :selected="selectedCard === duelB"
+                :show-elo="true"
+                :elo="state!.archetypes[duelB]?.elo ?? 1000"
+                @select="selectDuel(duelB)"
+              />
+            </div>
+            <div v-if="canCycleAllCards" class="duel-change-cards-wrap">
+              <button type="button" class="btn btn-outline btn-sm" @click="cycleAllCards">
+                {{ i('btn.changeCard') }}
+              </button>
+            </div>
+            <div class="actions">
+              <button
+                type="button"
+                class="btn btn-outline"
+                @click="finish"
+              >
+                {{ i('btn.finishEarly') }}
+              </button>
+            </div>
+          </section>
         </Transition>
       </div>
 
@@ -1331,6 +1328,15 @@ watch(transitioning, (isTransitioning) => {
 
 .duel-instruction {
   margin: 0;
+}
+
+.duel-category-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: -0.25rem 0 0.75rem;
 }
 
 .cards-grid {

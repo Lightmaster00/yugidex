@@ -1,6 +1,5 @@
 import { ref, computed } from 'vue'
 import type { TournamentState } from '~/types/tournament'
-import { COVERAGE_ROUNDS } from '~/types/tournament'
 import { useTournament } from '~/composables/useTournament'
 import { useCardLanguage, ARCHETYPE_BLOCKLIST } from '~/composables/useYgoApi'
 import { getCachedValidArchetypes, setCachedValidArchetypes } from '~/utils/archetypeCache'
@@ -14,13 +13,10 @@ export function useTournamentState () {
     fetchArchetypes,
     filterArchetypesWithEnoughRepresentatives,
     createInitialState,
-    getNextMatchPhase1,
-    getNextMatchPhase2_3way,
-    getNextMatch,
-    applyPhase1Result,
-    applyPhase2_3wayResult,
+    getNextMatchSwiss,
+    applyGroupResult,
     applyEloResult,
-    hasConverged,
+    isPhase3Done,
     undoLastResult,
     saveState: persistState,
     loadState: loadPersisted,
@@ -46,11 +42,15 @@ export function useTournamentState () {
 
     validNames = await getCachedValidArchetypes(lang)
     if (validNames && validNames.length >= 4) {
-      const seed = Math.floor(Math.random() * 1e6)
-      state.value = createInitialState(validNames, seed, 0)
-      await setNextMatch()
-      persistState(state.value!)
-      return
+      // Appliquer la blocklist aux noms cachés (la blocklist peut avoir changé depuis le cache)
+      validNames = validNames.filter(n => !ARCHETYPE_BLOCKLIST.has(n))
+      if (validNames.length >= 4) {
+        const seed = Math.floor(Math.random() * 1e6)
+        state.value = createInitialState(validNames, seed)
+        await setNextMatch()
+        persistState(state.value!)
+        return
+      }
     }
 
     let names: string[] = []
@@ -85,7 +85,7 @@ export function useTournamentState () {
     }
     await setCachedValidArchetypes(validNames, lang)
     const seed = Math.floor(Math.random() * 1e6)
-    state.value = createInitialState(validNames, seed, 0)
+    state.value = createInitialState(validNames, seed)
     await setNextMatch()
     persistState(state.value!)
   }
@@ -93,64 +93,34 @@ export function useTournamentState () {
   async function setNextMatch () {
     const s = state.value
     if (!s) return
-    if (s.phase === 'phase1') {
-      const next = getNextMatchPhase1(s)
+
+    // Phase 1 / Phase 2 : groupes pré-calculés
+    if (s.phase === 'phase1' || s.phase === 'phase2') {
+      const groups = s.currentRoundGroups
+      if (!groups || s.groupsCompleted >= groups.length) return
+      const nextGroup = groups[s.groupsCompleted]!
+      state.value = { ...s, currentMatch: nextGroup }
+      state.value = await ensureRepresentatives(state.value, nextGroup)
+      if (state.value.currentMatch === null) await setNextMatch()
+      else persistState(state.value)
+      return
+    }
+
+    // Phase 3 : Swiss 1v1
+    if (s.phase === 'phase3') {
+      if (isPhase3Done(s)) {
+        state.value = { ...s, phase: 'finished', currentMatch: null }
+        persistState(state.value)
+        return
+      }
+      const next = getNextMatchSwiss(s, s.phasePool)
       if (!next) {
-        if (s.phase2Threshold === 0 && s.remainingNames.length > 0) {
-          state.value = {
-            ...s,
-            losersPhase1: [...(s.losersPhase1 ?? []), ...s.remainingNames],
-            remainingNames: [...(s.losersPhase1 ?? []), ...s.remainingNames],
-            phase: 'phase2',
-            currentMatch: null
-          }
-        } else {
-          state.value = { ...s, phase: 'phase2', remainingNames: s.phase2Threshold === 0 ? [...(s.losersPhase1 ?? [])] : s.remainingNames, currentMatch: null }
-        }
-        await setNextMatch()
+        state.value = { ...s, phase: 'finished', currentMatch: null }
+        persistState(state.value)
         return
       }
       state.value = { ...s, currentMatch: next }
       state.value = await ensureRepresentatives(state.value, next)
-      if (state.value.currentMatch === null) await setNextMatch()
-      else persistState(state.value)
-      return
-    }
-    if (s.phase === 'phase2') {
-      if (s.phase2Threshold === 0) {
-        const next3 = getNextMatchPhase2_3way(s)
-        if (!next3) {
-          state.value = { ...s, phase: 'phase3', remainingNames: [...(s.winnersPhase1 ?? []), ...(s.winnersPhase2 ?? [])], currentMatch: null }
-          await setNextMatch()
-          return
-        }
-        state.value = { ...s, currentMatch: next3 }
-        state.value = await ensureRepresentatives(state.value, next3)
-        if (state.value.currentMatch === null) await setNextMatch()
-        else persistState(state.value)
-        return
-      }
-      const next2 = getNextMatch(s)
-      if (!next2) {
-        state.value = { ...s, phase: 'finished', currentMatch: null }
-        persistState(state.value)
-        return
-      }
-      state.value = { ...s, currentMatch: next2 }
-      state.value = await ensureRepresentatives(state.value, next2)
-      if (state.value.currentMatch === null) await setNextMatch()
-      else persistState(state.value)
-      return
-    }
-    if (s.phase === 'phase3') {
-      const next2 = getNextMatch(s)
-      if (!next2) {
-        state.value = { ...s, phase: 'finished', currentMatch: null }
-        persistState(state.value)
-        return
-      }
-      state.value = { ...s, currentMatch: next2 }
-      state.value = await ensureRepresentatives(state.value, next2)
       if (state.value.currentMatch === null) await setNextMatch()
       else persistState(state.value)
     }
@@ -160,7 +130,7 @@ export function useTournamentState () {
     loading.value = true
     try {
       const saved = loadPersisted()
-      const isFirstDuel = saved?.round === 0 && (saved.currentMatch?.length === 4)
+      const isFirstDuel = saved?.round === 0 && saved.currentMatch != null
       const hasRestorable =
         saved &&
         (saved.phase === 'finished' ||
@@ -177,9 +147,10 @@ export function useTournamentState () {
     }
   }
 
-  async function pickPhase1 (winner: string, losers: string[]) {
-    if (!state.value || (losers.length !== 3 && losers.length !== 2)) return
-    state.value = applyPhase1Result(state.value, winner, losers)
+  /** Phase 1 & 2 : l'utilisateur choisit un gagnant dans un groupe de 4 (ou 2-3). */
+  async function pickGroup (winner: string, losers: string[]) {
+    if (!state.value || losers.length < 1) return
+    state.value = applyGroupResult(state.value, winner, losers)
     persistState(state.value)
     transitioning.value = true
     try {
@@ -189,33 +160,12 @@ export function useTournamentState () {
     }
   }
 
-  async function pickPhase2_3way (winner: string, losers: string[]) {
-    if (!state.value || losers.length !== 2) return
-    state.value = applyPhase2_3wayResult(state.value, winner, losers)
-    persistState(state.value)
-    if (state.value.phase === 'phase3') {
-      transitioning.value = true
-      try {
-        await setNextMatch()
-      } finally {
-        transitioning.value = false
-      }
-      return
-    }
-    transitioning.value = true
-    try {
-      await setNextMatch()
-    } finally {
-      transitioning.value = false
-    }
-  }
-
-  async function pickPhase2 (winner: string, loser: string) {
+  /** Phase 3 : duel 1v1 Swiss. */
+  async function pickDuel (winner: string, loser: string) {
     if (!state.value) return
     state.value = applyEloResult(state.value, winner, loser)
     persistState(state.value)
-    const is4_3_2 = state.value.phase2Threshold === 0
-    if (!is4_3_2 && hasConverged(state.value)) {
+    if (isPhase3Done(state.value)) {
       state.value = { ...state.value, phase: 'finished', currentMatch: null }
       persistState(state.value)
       return
@@ -230,19 +180,8 @@ export function useTournamentState () {
 
   function undo () {
     if (!state.value) return
-    let reverted = undoLastResult(state.value)
+    const reverted = undoLastResult(state.value)
     if (reverted) {
-      if (
-        reverted.phase2Threshold === 0 &&
-        reverted.phase === 'phase2' &&
-        reverted.round === COVERAGE_ROUNDS
-      ) {
-        reverted = {
-          ...reverted,
-          phase: 'phase1',
-          remainingNames: Object.keys(reverted.archetypes)
-        }
-      }
       state.value = reverted
       persistState(state.value)
     }
@@ -311,9 +250,8 @@ export function useTournamentState () {
     canUndo,
     init,
     startTournament,
-    pickPhase1,
-    pickPhase2,
-    pickPhase2_3way,
+    pickGroup,
+    pickDuel,
     finish,
     undo,
     cycleArchetypeImage,

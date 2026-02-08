@@ -9,10 +9,11 @@ export function getTop10 (state: TournamentState): Array<{
   losses: number
   matchesPlayed: number
 }> {
+  // In phase 3 / finished, use phasePool (top 24 finalists). Otherwise, all archetypes.
   const names =
-    state.phase2Threshold === 0
-      ? state.remainingNames
-      : state.remainingNames.filter(n => !state.archetypes[n]?.eliminated)
+    (state.phase === 'phase3' || state.phase === 'finished') && state.phasePool?.length
+      ? state.phasePool
+      : state.remainingNames
 
   const list = names
     .map(n => ({ name: n, ...state.archetypes[n] }))
