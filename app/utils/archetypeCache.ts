@@ -8,7 +8,7 @@ const STORE_NAME = 'archetypes'
 const DB_VERSION = 2
 const CACHE_KEY = 'valid-names'
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000 // 30 jours
-const ALGORITHM_VERSION = 9
+const ALGORITHM_VERSION = 10
 
 function isClient (): boolean {
   return typeof indexedDB !== 'undefined'

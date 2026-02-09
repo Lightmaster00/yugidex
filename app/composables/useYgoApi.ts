@@ -1,6 +1,6 @@
 import type { CardInfoApiResponse, YgoCard } from '~/types/api'
 import type { RepresentativeCard } from '~/types/tournament'
-import { pickRepresentativeCards, pickRepresentativeCard, getCardImageUrl, getFullCardImageUrl, getCardCategory, hasValidRepresentatives } from '~/utils/representativeCard'
+import { pickRepresentativeCards, pickRepresentativeCard, getCardImageUrl, hasValidRepresentatives, pick5Main5Extra, getExtraPolicy, buildArchetypeProfile } from '~/utils/representativeCard'
 import { clearCachedArchetypes } from '~/utils/archetypeCache'
 
 const ARCHETYPES_URL = 'https://db.ygoprodeck.com/api/v7/archetypes.php'
@@ -180,8 +180,8 @@ export async function hasEnoughRepresentatives (archetypeName: string): Promise<
   return hasValidRepresentatives(cards, archetypeName)
 }
 
-const BATCH_SIZE = 28
-const BATCH_DELAY_MS = 700
+const BATCH_SIZE = 50
+const BATCH_DELAY_MS = 180
 
 /** Garde uniquement les archétypes qui ont au moins 2 images au bon format. */
 export async function filterArchetypesWithEnoughRepresentatives (
@@ -201,42 +201,31 @@ export async function filterArchetypesWithEnoughRepresentatives (
   return valid
 }
 
-/** Charge les cartes représentatives (6-12). Retourne null si validation échoue. */
+/** Charge 5 Main + 5 Extra (artworks), extraPolicy et profil esthétique. Retourne null si validation échoue. */
 export async function loadRepresentativesForArchetype (
   archetypeName: string
-): Promise<{ representativeCards: RepresentativeCard[]; representativeIndex: number } | null> {
+): Promise<{
+  representativeCards: RepresentativeCard[]
+  representativeIndex: number
+  extraPolicy: import('~/types/ranking').ExtraPolicy
+  profile: import('~/types/ranking').ArchetypeProfile
+} | null> {
   const cards = await fetchCardsForArchetype(archetypeName)
   if (!hasValidRepresentatives(cards, archetypeName)) return null
-  const top = pickRepresentativeCards(cards, archetypeName)
-  const representativeCards: (RepresentativeCard | undefined)[] = top.map(c =>
-    c
-      ? {
-          id: c.id,
-          imageUrl: getCardImageUrl(c),
-          imageUrlFull: getFullCardImageUrl(c),
-          name: c.name,
-          frameType: c.frameType ?? frameTypeFromCardType(c.type),
-          attribute: c.attribute,
-          level: c.level,
-          race: c.race,
-          atk: c.atk,
-          def: c.def,
-          category: getCardCategory(c)
-        }
-      : undefined
-  )
-  /* Afficher par défaut la carte la plus importante (index 0, déjà triée par score) */
-  const representativeIndex = 0
-  return { representativeCards, representativeIndex }
+  const representativeCards = pickRepresentativeCards(cards, archetypeName)
+  const { main, extra } = pick5Main5Extra(cards, archetypeName)
+  const extraPolicy = getExtraPolicy(extra)
+  const profile = buildArchetypeProfile(cards, archetypeName, main, extra)
+  return { representativeCards, representativeIndex: 0, extraPolicy, profile }
 }
 
-/** Rétrocompat : une seule carte. */
+/** Rétrocompat : une seule carte (première Main). */
 export async function loadRepresentativeForArchetype (
   archetypeName: string
 ): Promise<{ imageUrl: string; representativeCardId: number } | null> {
   const res = await loadRepresentativesForArchetype(archetypeName)
-  const defined = res?.representativeCards?.filter((c): c is RepresentativeCard => c != null) ?? []
-  if (!defined.length) return null
-  const cur = defined[res?.representativeIndex ?? 0] ?? defined[0]
+  const cards = res?.representativeCards ?? []
+  if (!cards.length) return null
+  const cur = cards[res?.representativeIndex ?? 0] ?? cards[0]
   return { imageUrl: cur.imageUrl, representativeCardId: cur.id }
 }

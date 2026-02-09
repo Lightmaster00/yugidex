@@ -1,39 +1,37 @@
-/** Catégorie de carte dans le slot de représentants */
+/** Catégorie de carte dans le slot de représentants (monstres uniquement pour 5+5). */
 export type RepresentativeCategory = 'extra' | 'main' | 'spell' | 'trap'
 
-/** Une carte représentative (pour affichage, cadre type Yu-Gi-Oh!) */
+/** Une carte représentative — affichage artwork uniquement (image_url_cropped). */
 export interface RepresentativeCard {
   id: number
-  /** URL image cropped (art seulement) */
+  /** URL image cropped (artwork uniquement, pas de cadre ni stats). */
   imageUrl: string
-  /** URL image complète de la carte (design officiel YGOPRODeck) */
-  imageUrlFull?: string
-  name?: string
-  frameType?: string
-  attribute?: string
-  level?: number
-  race?: string
-  atk?: number
-  def?: number
-  /** Catégorie : extra / main / spell / trap */
-  category?: RepresentativeCategory
+  /** Catégorie : main / extra pour la grille 5+5. */
+  category?: 'main' | 'extra'
+  /** Type affiché sous le nom (Fusion, Synchro, Xyz, Link, Main, Pendulum, etc.). */
+  displayType?: string
 }
 
-/** Données d'un archétype dans l'état du tournoi */
+import type { ExtraPolicy, ArchetypeProfile } from '~/types/ranking'
+export type { ExtraPolicy, ArchetypeProfile } from '~/types/ranking'
+
+/** Données d'un archétype dans l'état du tournoi (préférence esthétique). */
 export interface ArchetypeState {
   elo: number
   wins: number
   losses: number
-  /** 8 cartes représentatives (2 Extra + 2 Main + 2 Spell + 2 Trap) ; certaines entrées peuvent être undefined si le pool était trop petit. */
-  representativeCards?: (RepresentativeCard | undefined)[]
-  /** Index de la carte actuellement affichée dans representativeCards */
+  /** 5 Main + 5 Extra (artworks uniquement), ordre stable. */
+  representativeCards?: RepresentativeCard[]
+  /** Index de la carte actuellement affichée (cycle hors match). */
   representativeIndex?: number
-  /** Rétrocompat: URL et id de la carte affichée (dérivés si representativeCards existe) */
+  /** Tag Extra Deck : No Extra / Fusion / Synchro / Xyz / Link. */
+  extraPolicy?: ExtraPolicy
+  /** Profil esthétique (race, attribute, nameTokens) pour similarité. */
+  profile?: ArchetypeProfile
+  /** Rétrocompat */
   imageUrl?: string
   representativeCardId?: number
-  /** Attribut dominant de l'archétype (DARK, LIGHT, FIRE…) pour le groupement thématique */
   dominantAttribute?: string
-  /** Race/type dominant de l'archétype (Dragon, Warrior, Spellcaster…) pour le groupement thématique */
   dominantRace?: string
 }
 

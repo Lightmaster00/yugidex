@@ -154,10 +154,10 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
   if (state.phase === 'phase1') {
     const nextPhaseRound = state.phaseRound + 1
     if (nextPhaseRound >= COVERAGE_ROUND_COUNT) {
-      // → Phase 2 : top 50%
+      // → Phase 2 : top 50%, groupes de 3 (thème / proximité Elo)
       const poolSize = Math.max(4, Math.ceil(state.remainingNames.length * REFINEMENT_POOL_FRACTION))
       const pool = getTopByElo(state.archetypes, state.remainingNames, poolSize)
-      const groups = buildEloProximityGroups(pool, state.archetypes, state.seed + 5000)
+      const groups = buildEloProximityGroups(pool, state.archetypes, state.seed + 5000, 3)
       next.phase = 'phase2'
       next.phaseRound = 0
       next.groupsCompleted = 0

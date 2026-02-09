@@ -3,6 +3,7 @@ import type { TournamentState } from '~/types/tournament'
 import { useTournament } from '~/composables/useTournament'
 import { useCardLanguage, ARCHETYPE_BLOCKLIST } from '~/composables/useYgoApi'
 import { getCachedValidArchetypes, setCachedValidArchetypes } from '~/utils/archetypeCache'
+import { getOrCreateUserId, saveVote } from '~/utils/rankingStorage'
 
 export function useTournamentState () {
   const state = ref<TournamentState | null>(null)
@@ -176,6 +177,8 @@ export function useTournamentState () {
   /** Phase 1 & 2 : l'utilisateur choisit un gagnant dans un groupe de 4 (ou 2-3). */
   async function pickGroup (winner: string, losers: string[]) {
     if (!state.value || losers.length < 1) return
+    getOrCreateUserId()
+    for (const loser of losers) saveVote(winner, loser)
     state.value = applyGroupResult(state.value, winner, losers)
     persistState(state.value)
     transitioning.value = true
@@ -189,6 +192,8 @@ export function useTournamentState () {
   /** Phase 3 : duel 1v1 Swiss. */
   async function pickDuel (winner: string, loser: string) {
     if (!state.value) return
+    getOrCreateUserId()
+    saveVote(winner, loser)
     state.value = applyEloResult(state.value, winner, loser)
     persistState(state.value)
     if (isPhase3Done(state.value)) {

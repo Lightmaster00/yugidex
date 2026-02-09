@@ -1,22 +1,19 @@
 <script setup lang="ts">
+import type { ExtraPolicy } from '~/types/ranking'
 import { CARD_BACK_IMAGE_URL } from '~/utils/representativeCard'
 
 defineProps<{
   name: string
-  cardName?: string
-  frameType?: string
-  attribute?: string
-  level?: number
-  race?: string
-  atk?: number
-  def?: number
-  imageUrlFull?: string
-  cardId?: number
+  /** URL image de la carte. */
   imageUrl?: string
   selected?: boolean
   showElo?: boolean
   elo?: number
-  /** Afficher le dos de carte Yu-Gi-Oh! (quand l'archétype n'a pas de carte à ce slot/catégorie). */
+  /** Type de la carte affichée (Fusion, Synchro, Main, Pendulum, etc.) — selon la carte affichée. */
+  cardType?: string
+  /** Fallback si pas de cardType (tag Extra Deck de l'archétype). */
+  extraPolicy?: ExtraPolicy
+  /** Afficher le dos de carte quand pas d'image à ce slot. */
   showCardBack?: boolean
 }>()
 
@@ -30,6 +27,18 @@ const cardBackLoadFailed = ref(false)
 function onCardBackError () {
   cardBackLoadFailed.value = true
 }
+
+/** Libellé du tag sous le nom : type de la carte affichée, ou extraPolicy en fallback. */
+function tagLabel (cardType?: string, extraPolicy?: ExtraPolicy): string | null {
+  if (cardType) return cardType
+  if (!extraPolicy || extraPolicy === 'none') return 'No Extra'
+  if (extraPolicy === 'fusion') return 'Fusion'
+  if (extraPolicy === 'synchro') return 'Synchro'
+  if (extraPolicy === 'xyz') return 'Xyz'
+  if (extraPolicy === 'link') return 'Link'
+  if (extraPolicy === 'mixed') return 'Mixed'
+  return null
+}
 </script>
 
 <template>
@@ -37,25 +46,25 @@ function onCardBackError () {
     class="archetype-card"
     :class="{ selected }"
   >
-    <!-- Clickable area: header + card -->
     <button
       type="button"
       class="archetype-card__select-btn"
       @click="emit('select')"
     >
-      <!-- Archetype name ABOVE the card -->
       <div class="archetype-card__header">
         <span class="archetype-card__name">{{ name }}</span>
         <span v-if="showElo && elo != null" class="archetype-card__elo">{{ elo }}</span>
       </div>
-
-      <span class="archetype-card__card-wrap">
+      <span v-if="tagLabel(cardType, extraPolicy)" class="archetype-card__tag">
+        {{ tagLabel(cardType, extraPolicy) }}
+      </span>
+      <span class="archetype-card__artwork-wrap">
         <template v-if="showCardBack">
           <img
             v-if="!cardBackLoadFailed"
             :src="cardBackImageUrl"
             alt=""
-            class="archetype-card__back-img"
+            class="archetype-card__artwork"
             @error="onCardBackError"
           >
           <div
@@ -64,27 +73,18 @@ function onCardBackError () {
             aria-hidden="true"
           />
         </template>
-        <YgoCardFrame
-          v-if="!showCardBack"
-          :card-name="cardName ?? name"
-          :frame-type="frameType"
-          :image-url-full="imageUrlFull"
-          :attribute="attribute"
-          :level="level"
-          :race="race"
-          :atk="atk"
-          :def="def"
-          :card-id="cardId"
-          :image-url="imageUrl"
+        <img
+          v-else-if="imageUrl"
+          :src="imageUrl"
           :alt="name"
-        />
+          class="archetype-card__artwork"
+        >
       </span>
     </button>
   </div>
 </template>
 
 <style scoped>
-/* max-width peut être contraint par le parent (ex. .duel-arena__slot) via --archetype-card-max-width */
 .archetype-card {
   display: flex;
   flex-direction: column;
@@ -127,17 +127,14 @@ function onCardBackError () {
   border-radius: 12px;
 }
 
-/* Header above card: archetype name + Elo */
 .archetype-card__header {
   display: flex;
   align-items: baseline;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0 0.25rem 0.45rem;
+  padding: 0 0.25rem 0.25rem;
   width: 100%;
   min-height: 1.4rem;
-  position: relative;
-  z-index: 1;
 }
 
 .archetype-card__name {
@@ -151,7 +148,6 @@ function onCardBackError () {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
-  transition: color 0.2s ease;
 }
 
 .archetype-card__select-btn:hover .archetype-card__name {
@@ -170,112 +166,59 @@ function onCardBackError () {
   flex-shrink: 0;
 }
 
-/* Card wrap: hover zoom — padding reserves space so the scale doesn't overlap neighbours */
-.archetype-card__card-wrap {
+.archetype-card__tag {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-bottom: 0.35rem;
+}
+
+.archetype-card__artwork-wrap {
   display: block;
   width: 100%;
-  max-width: 100%;
-  padding: 6px 0;
+  aspect-ratio: 1;
+  margin-top: 1rem;
+  padding: 4px 0;
   transform-origin: center center;
   transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), filter 0.3s ease;
   box-sizing: border-box;
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
 }
 
-.archetype-card__select-btn:hover .archetype-card__card-wrap {
+.archetype-card__select-btn:hover .archetype-card__artwork-wrap {
   transform: scale(1.04);
 }
 
-.archetype-card.selected .archetype-card__card-wrap {
+.archetype-card.selected .archetype-card__artwork-wrap {
   filter: drop-shadow(0 0 24px var(--accent-glow)) drop-shadow(0 0 8px rgba(232, 192, 64, 0.15));
 }
 
-.archetype-card__select-btn:active .archetype-card__card-wrap {
-  transform: scale(1.01);
-}
-
-/* Deep card styles for interaction feedback */
-.archetype-card__select-btn :deep(.ygo-card),
-.archetype-card__select-btn :deep(.ygo-card--official) {
-  transition: box-shadow 0.3s ease;
-}
-
-.archetype-card__select-btn :deep(.ygo-card__full-img) {
-  transition: filter 0.3s ease;
-}
-
-.archetype-card__select-btn :deep(.ygo-card__picture-inner img) {
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), filter 0.3s ease;
-}
-
-.archetype-card__select-btn:hover :deep(.ygo-card--official) {
-  box-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.5),
-    0 4px 16px rgba(0, 0, 0, 0.3);
-}
-
-.archetype-card__select-btn:hover :deep(.ygo-card__picture-inner img) {
-  transform: scale(1.03);
-}
-
-.archetype-card.selected :deep(.ygo-card--official) {
-  box-shadow:
-    0 0 0 2px var(--accent),
-    0 12px 40px rgba(0, 0, 0, 0.4),
-    0 0 32px var(--accent-glow);
-}
-
-.archetype-card.selected :deep(.ygo-card__full-img),
-.archetype-card.selected :deep(.ygo-card__picture-inner img) {
-  filter: drop-shadow(0 0 16px var(--accent-glow));
-}
-
-/* Dos de carte Yu-Gi-Oh! — image depuis l'API (même CDN), ratio 421/614 */
-.archetype-card__back-img {
+/* Carré parfait, même taille pour toutes les images. */
+.archetype-card__artwork {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  aspect-ratio: 421 / 614;
+  height: 100%;
   object-fit: cover;
+  object-position: top center;
   border-radius: 10px;
   display: block;
-  box-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.4),
-    0 8px 32px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
-/* Fallback si l'image du dos ne charge pas (CSS) */
 .archetype-card__back {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  aspect-ratio: 421 / 614;
+  height: 100%;
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(145deg, #2a1f18 0%, #1a1210 40%, #0f0c0a 100%);
   border: 2px solid rgba(180, 140, 90, 0.4);
-  box-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.4),
-    0 8px 32px rgba(0, 0, 0, 0.3),
-    inset 0 0 0 1px rgba(200, 160, 100, 0.15);
-  position: relative;
-}
-
-.archetype-card__back::before {
-  content: '';
-  position: absolute;
-  inset: 8%;
-  border-radius: 50%;
-  background: radial-gradient(
-    ellipse 70% 80% at 50% 50%,
-    rgba(200, 160, 90, 0.35) 0%,
-    rgba(160, 120, 60, 0.2) 40%,
-    transparent 70%
-  );
-  pointer-events: none;
-}
-
-.archetype-card__back::after {
-  content: '';
-  position: absolute;
-  inset: 12%;
-  border: 2px solid rgba(200, 160, 90, 0.25);
-  border-radius: 50%;
-  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 </style>

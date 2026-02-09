@@ -15,12 +15,6 @@ import {
 import { downloadTop10Csv, getTop10, exportTop10Csv } from '~/utils/csv'
 import { fetchArchetypes, filterArchetypesWithEnoughRepresentatives } from '~/composables/useYgoApi'
 
-const RATE_LIMIT_MS = 40
-
-function delay (ms: number): Promise<void> {
-  return new Promise(r => setTimeout(r, ms))
-}
-
 export function useTournament () {
   /** Retire un archétype du state (sans images = on le supprime). */
   function removeArchetypeFromState (
@@ -42,53 +36,47 @@ export function useTournament () {
     return next
   }
 
-  /** Détermine l'attribut et la race dominants parmi les cartes représentatives (monstres uniquement). */
-  function computeDominants (cards: RepresentativeCard[]): { dominantAttribute?: string; dominantRace?: string } {
-    const monsters = cards.filter(c => c.category === 'extra' || c.category === 'main')
-    if (!monsters.length) return {}
-    const attrCount = new Map<string, number>()
-    const raceCount = new Map<string, number>()
-    for (const c of monsters) {
-      if (c.attribute) attrCount.set(c.attribute, (attrCount.get(c.attribute) ?? 0) + 1)
-      if (c.race) raceCount.set(c.race, (raceCount.get(c.race) ?? 0) + 1)
+  /** Applique le résultat d'un chargement représentatif à l'état (une archétype). */
+  function applyRepresentativeResult (
+    state: TournamentState,
+    archetypeName: string,
+    res: Awaited<ReturnType<typeof loadRepresentativesForArchetype>>
+  ): TournamentState {
+    if (!res?.representativeCards?.length) return removeArchetypeFromState(state, archetypeName)
+    const cur = res.representativeCards[res.representativeIndex ?? 0] ?? res.representativeCards[0]
+    const dominantAttribute = res.profile
+      ? Object.entries(res.profile.attributeHistogram).sort((a, b) => b[1] - a[1])[0]?.[0]
+      : undefined
+    const dominantRace = res.profile
+      ? Object.entries(res.profile.raceHistogram).sort((a, b) => b[1] - a[1])[0]?.[0]
+      : undefined
+    const next = { ...state, archetypes: { ...state.archetypes } }
+    next.archetypes[archetypeName] = {
+      ...state.archetypes[archetypeName],
+      representativeCards: res.representativeCards,
+      representativeIndex: res.representativeIndex,
+      extraPolicy: res.extraPolicy,
+      profile: res.profile,
+      imageUrl: cur.imageUrl,
+      representativeCardId: cur.id,
+      dominantAttribute: dominantAttribute !== '_' ? dominantAttribute : undefined,
+      dominantRace: dominantRace !== '_' ? dominantRace : undefined
     }
-    const dominantAttribute = attrCount.size
-      ? [...attrCount.entries()].sort((a, b) => b[1] - a[1])[0]![0]
-      : undefined
-    const dominantRace = raceCount.size
-      ? [...raceCount.entries()].sort((a, b) => b[1] - a[1])[0]![0]
-      : undefined
-    return { dominantAttribute, dominantRace }
+    return next
   }
 
-  /** Charge les cartes représentatives si pas encore en cache. Si pas d'images, supprime l'archétype. */
+  /** Charge les cartes représentatives (5+5) si pas encore en cache. Si pas d'images, supprime l'archétype. */
   async function ensureRepresentative (
     state: TournamentState,
     archetypeName: string
   ): Promise<TournamentState> {
     const entry = state.archetypes[archetypeName]
     if (entry?.representativeCards?.length) return state
-    await delay(RATE_LIMIT_MS)
     const res = await loadRepresentativesForArchetype(archetypeName)
-    if (!res) return removeArchetypeFromState(state, archetypeName)
-    const defined = res.representativeCards.filter((c): c is RepresentativeCard => c != null)
-    if (!defined.length) return removeArchetypeFromState(state, archetypeName)
-    const cur = defined[res.representativeIndex ?? 0] ?? defined[0]
-    const { dominantAttribute, dominantRace } = computeDominants(defined)
-    const next = { ...state, archetypes: { ...state.archetypes } }
-    next.archetypes[archetypeName] = {
-      ...state.archetypes[archetypeName],
-      representativeCards: res.representativeCards,
-      representativeIndex: res.representativeIndex,
-      imageUrl: cur?.imageUrl,
-      representativeCardId: cur?.id,
-      dominantAttribute,
-      dominantRace
-    }
-    return next
+    return applyRepresentativeResult(state, archetypeName, res)
   }
 
-  /** Passe à l'image suivante parmi les représentatives d'un archétype (ignore les slots undefined). */
+  /** Passe à l'image suivante parmi les 10 représentatives (5 Main + 5 Extra). */
   function cycleRepresentative (
     state: TournamentState,
     archetypeName: string
@@ -96,12 +84,8 @@ export function useTournament () {
     const entry = state.archetypes[archetypeName]
     const cards = entry?.representativeCards
     if (!cards?.length) return state
-    const definedIndices = cards.map((c, i) => (c != null ? i : -1)).filter(i => i >= 0)
-    if (!definedIndices.length) return state
     const currentIdx = entry.representativeIndex ?? 0
-    const pos = definedIndices.indexOf(currentIdx)
-    const nextPos = (pos + 1) % definedIndices.length
-    const nextIndex = definedIndices[nextPos]!
+    const nextIndex = (currentIdx + 1) % cards.length
     const cur = cards[nextIndex]
     if (!cur) return state
     const next = { ...state, archetypes: { ...state.archetypes } }
@@ -114,14 +98,22 @@ export function useTournament () {
     return next
   }
 
-  /** Assure les images pour une liste d'archétypes (séquentiel pour rate limit). */
+  /** Assure les images pour une liste d'archétypes (chargement en parallèle). */
   async function ensureRepresentatives (
     state: TournamentState,
     names: string[]
   ): Promise<TournamentState> {
+    const toLoad = names.filter(n => !state.archetypes[n]?.representativeCards?.length)
+    if (toLoad.length === 0) return state
+    const results = await Promise.all(
+      toLoad.map(async (n) => {
+        const res = await loadRepresentativesForArchetype(n)
+        return { name: n, res }
+      })
+    )
     let s = state
-    for (const n of names) {
-      s = await ensureRepresentative(s, n)
+    for (const { name, res } of results) {
+      s = applyRepresentativeResult(s, name, res)
     }
     return s
   }

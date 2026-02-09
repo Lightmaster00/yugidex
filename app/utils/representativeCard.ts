@@ -1,4 +1,11 @@
 import type { YgoCard } from '~/types/api'
+import type { RepresentativeCard } from '~/types/tournament'
+import type { ExtraPolicy, ArchetypeProfile } from '~/types/ranking'
+
+/** Grille 5+5 : 5 monstres Main Deck + 5 monstres Extra Deck (artworks uniquement). */
+export const MAIN_DISPLAY_COUNT = 5
+export const EXTRA_DISPLAY_COUNT = 5
+const TOTAL_DISPLAY_COUNT = MAIN_DISPLAY_COUNT + EXTRA_DISPLAY_COUNT
 
 const RARITY_ORDER = [
   'Quarter Century',
@@ -101,7 +108,7 @@ function getTypeScore (card: YgoCard): number {
     f.includes('xyz') ||
     f.includes('link')
   ) {
-    return 110
+    return 120
   }
   if (
     t.includes('monster') &&
@@ -132,6 +139,27 @@ function getAtkBonus (card: YgoCard): number {
   const linear = Math.floor((capped / 4000) * 40)
   const bossBonus = atk >= 2500 ? 15 : 0
   return linear + bossBonus
+}
+
+/**
+ * Bonus DEF : monstres en défense (haute DEF = cartes clés dans certains archétypes).
+ */
+function getDefBonus (card: YgoCard): number {
+  const def = card.def
+  if (def == null || typeof def !== 'number') return 0
+  const capped = Math.min(4000, Math.max(0, def))
+  return Math.floor((capped / 4000) * 25)
+}
+
+/**
+ * Bonus longueur du texte d'effet : cartes avec effet détaillé = souvent plus importantes.
+ * Plafonné pour ne pas surpondérer les murs de texte.
+ */
+function getEffectLengthScore (card: YgoCard): number {
+  const len = (card.desc ?? '').length
+  if (len <= 0) return 0
+  const capped = Math.min(len, 500)
+  return Math.floor((capped / 500) * 20)
 }
 
 /**
@@ -203,18 +231,30 @@ function enName (card: YgoCard): string {
 }
 
 /**
- * Vérifie si la carte appartient à l'archétype.
- * Les cartes proviennent de l'API `?archetype=X` donc elles y appartiennent toutes.
- * On accepte toutes les cartes retournées par l'API — le filtrage est déjà fait côté serveur.
+ * Vérifie si la carte appartient officiellement à l'archétype.
+ * On ne garde que les cartes dont le champ `archetype` correspond exactement à l'archétype demandé,
+ * pour éviter les cartes dans plusieurs archétypes (ex: Dragon-Electroqueu dans Watt) ou les faux positifs.
  */
-function belongsToArchetype (_card: YgoCard, _archetypeName: string): boolean {
-  return true
+function belongsToArchetype (card: YgoCard, archetypeName: string): boolean {
+  const cardArch = (card.archetype ?? '').trim()
+  const name = archetypeName.trim()
+  if (!name) return false
+  if (!cardArch) return false
+  return normalize(cardArch) === normalize(name)
+}
+
+/** True si la carte est Extra Deck (Fusion/Synchro/Xyz/Link). */
+function isExtraDeck (card: YgoCard): boolean {
+  const t = (card.type ?? '').toLowerCase()
+  const f = (card.frameType ?? '').toLowerCase()
+  return [t, f].some(s =>
+    s.includes('fusion') || s.includes('synchro') || s.includes('xyz') || s.includes('link')
+  )
 }
 
 /**
- * Score une carte pour déterminer si elle est "importante" pour l'archétype.
- * Hiérarchie : nom archétype dans le nom >>> popularité (reprints) >>> puissance (ATK/rareté) >>> mentions dans l'effet.
- * Les "boss monsters" (nom = archétype + descripteur, haute ATK, beaucoup de reprints) scorent le plus haut.
+ * Score une carte pour déterminer les « meilleures » de l'archétype.
+ * Critères : Extra Deck privilégié, nom archétype, rareté, ATK/DEF, rééditions, longueur d'effet, date.
  */
 function scoreCard (card: YgoCard, archetypeName: string): number {
   const scoringName = enName(card)
@@ -224,9 +264,12 @@ function scoreCard (card: YgoCard, archetypeName: string): number {
   const rarityScore = getRarityScore(card)
   const dateScore = getDateScore(card)
   const atkBonus = getAtkBonus(card)
+  const defBonus = getDefBonus(card)
   const exactNameBonus = isExactArchetypeName(scoringName, archetypeName) ? 150 : 0
   const reprintScore = getReprintScore(card)
   const descBonus = getDescriptionBonus(card, archetypeName)
+  const effectLengthScore = getEffectLengthScore(card)
+  const extraBonus = isExtraDeck(card) ? 50 : 0
   return (
     nameScore * 5 +
     typeScore +
@@ -234,9 +277,12 @@ function scoreCard (card: YgoCard, archetypeName: string): number {
     rarityScore * 2 +
     dateScore * 2 +
     atkBonus +
+    defBonus +
     exactNameBonus +
     reprintScore * 3 +
-    descBonus
+    descBonus +
+    effectLengthScore +
+    extraBonus
   )
 }
 
@@ -256,7 +302,9 @@ function tieBreak (c1: YgoCard, c2: YgoCard, archetypeName: string): number {
   const d1 = getBestReleaseDate(c1)?.getTime() ?? 0
   const d2 = getBestReleaseDate(c2)?.getTime() ?? 0
   if (d1 !== d2) return d1 - d2
-  return (c2.atk ?? 0) - (c1.atk ?? 0)
+  const atkDiff = (c2.atk ?? 0) - (c1.atk ?? 0)
+  if (atkDiff !== 0) return atkDiff
+  return (c2.def ?? 0) - (c1.def ?? 0)
 }
 
 /** Carte avec illustration compatible : pas Skill / Rush. Pendulum inclus. */
@@ -310,6 +358,72 @@ export function getCardCategory (card: YgoCard): CardCategory {
   return 'main'
 }
 
+/**
+ * Sélection : toujours 10 cartes au total.
+ * Extra en premier (jusqu’à 5), puis Main pour compléter (meilleures en tête).
+ * Tri par pertinence : rareté, ATK/DEF, rééditions, longueur d’effet, nom.
+ */
+export function pick5Main5Extra (
+  cards: YgoCard[],
+  archetypeName: string
+): { main: YgoCard[]; extra: YgoCard[] } {
+  const pool = preparePool(cards, archetypeName)
+  const mainPool = pool.filter(c => getCardCategory(c) === 'main')
+  const extraPool = pool.filter(c => getCardCategory(c) === 'extra')
+  const sortedMain = sortByRelevance(mainPool, archetypeName)
+  const sortedExtra = sortByRelevance(extraPool, archetypeName)
+  const extraCount = Math.min(EXTRA_DISPLAY_COUNT, sortedExtra.length)
+  const mainCount = TOTAL_DISPLAY_COUNT - extraCount
+  return {
+    main: sortedMain.slice(0, Math.max(0, mainCount)),
+    extra: sortedExtra.slice(0, extraCount)
+  }
+}
+
+/** Tag Extra Deck pour l'archétype (affichage et matchmaking). */
+export function getExtraPolicy (extraCards: YgoCard[]): ExtraPolicy {
+  if (!extraCards.length) return 'none'
+  const types = new Set<string>()
+  for (const c of extraCards) {
+    const t = (c.type ?? '').toLowerCase()
+    const f = (c.frameType ?? '').toLowerCase()
+    if (t.includes('fusion') || f.includes('fusion')) types.add('fusion')
+    if (t.includes('synchro') || f.includes('synchro')) types.add('synchro')
+    if (t.includes('xyz') || f.includes('xyz')) types.add('xyz')
+    if (t.includes('link') || f.includes('link')) types.add('link')
+  }
+  if (types.size === 0) return 'none'
+  if (types.size > 1) return 'mixed'
+  return types.has('fusion') ? 'fusion' : types.has('synchro') ? 'synchro' : types.has('xyz') ? 'xyz' : 'link'
+}
+
+/** Construit le profil esthétique (race, attribute, nameTokens). Pas d'ATK/DEF, date, popularité. */
+export function buildArchetypeProfile (
+  cards: YgoCard[],
+  archetypeName: string,
+  mainCards: YgoCard[],
+  extraCards: YgoCard[]
+): ArchetypeProfile {
+  const monsters = [...mainCards, ...extraCards]
+  const raceHistogram: Record<string, number> = {}
+  const attributeHistogram: Record<string, number> = {}
+  for (const c of monsters) {
+    const r = (c.race ?? '').trim() || '_'
+    raceHistogram[r] = (raceHistogram[r] ?? 0) + 1
+    const a = (c.attribute ?? '').trim() || '_'
+    attributeHistogram[a] = (attributeHistogram[a] ?? 0) + 1
+  }
+  const nameTokensArr = nameTokens(archetypeName)
+  return {
+    topMainIds: mainCards.map(c => c.id),
+    topExtraIds: extraCards.map(c => c.id),
+    noExtra: extraCards.length === 0,
+    raceHistogram,
+    attributeHistogram,
+    nameTokens: nameTokensArr
+  }
+}
+
 /** Tri par puissance / pertinence dans une catégorie (boss first). */
 function sortByRelevance (arr: YgoCard[], archetypeName: string): YgoCard[] {
   return [...arr].sort((x, y) => {
@@ -321,12 +435,13 @@ function sortByRelevance (arr: YgoCard[], archetypeName: string): YgoCard[] {
 }
 
 /**
- * Prépare le pool filtré pour un archétype (archetype match, square art, no tokens).
+ * Prépare le pool filtré pour un archétype (archetype officiel exact, square art, no tokens).
+ * On n’utilise que les cartes dont card.archetype correspond exactement (pas de fallback).
  */
 function preparePool (cards: YgoCard[], archetypeName: string): YgoCard[] {
   if (!cards.length) return []
   const filtered = cards.filter(c => belongsToArchetype(c, archetypeName))
-  const pool = filtered.length ? filtered : cards
+  const pool = filtered
   const squarePool = pool.filter(hasSquareArt)
   const usePool = squarePool.length > 0 ? squarePool : pool
   const noTokenPool = usePool.filter(c => !isTokenCard(c))
@@ -334,116 +449,66 @@ function preparePool (cards: YgoCard[], archetypeName: string): YgoCard[] {
 }
 
 /**
- * Vérifie qu'un archétype a assez de cartes pour être inclus dans le tournoi.
- * Règles :
- * - Au moins un monstre (extra ou main deck)
- * - Au moins 1 magie OU 1 piège (un vrai archétype a du support spell/trap)
- * - Au moins 2 catégories distinctes avec des cartes
- * - Au moins 6 cartes représentatives au total
- * - Au moins 25% des cartes doivent mentionner l'archétype dans leur nom EN ou effet EN
- *   (filtre les archétypes "fourre-tout" dont les cartes n'ont pas de cohérence)
+ * Vérifie qu'un archétype peut fournir 10 cartes (Extra + Main).
+ * Il faut au moins (10 - min(5, nb Extra)) monstres Main pour compléter.
  */
 export function hasValidRepresentatives (cards: YgoCard[], archetypeName: string): boolean {
   const pool = preparePool(cards, archetypeName)
-  if (!pool.length) return false
-
-  // Cohérence : au moins 25% des cartes mentionnent l'archétype dans leur nom ou effet
-  // On utilise le nom EN pour le check car les noms d'archétype API sont toujours en anglais
-  const archNorm = normalize(archetypeName)
-  if (archNorm.length >= 3) {
-    const escaped = archNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const regex = new RegExp(escaped.replace(/\s+/g, '\\s+'), 'i')
-    const mentioning = pool.filter(c => {
-      // Toujours utiliser le nom EN pour la cohérence (fiable même en mode FR/DE/etc.)
-      const nameEn = normalize(c.name_en ?? c.name)
-      if (nameEn.includes(archNorm)) return true
-      // Vérifier aussi dans l'effet (peut être traduit, mais le nom de l'archétype y apparaît souvent tel quel)
-      const desc = (c.desc ?? '').toLowerCase()
-      return regex.test(desc)
-    })
-    if (pool.length >= 6 && mentioning.length / pool.length < 0.25) return false
-  }
-
-  const extra = pool.filter(c => getCardCategory(c) === 'extra')
   const main = pool.filter(c => getCardCategory(c) === 'main')
-  const spell = pool.filter(c => getCardCategory(c) === 'spell')
-  const trap = pool.filter(c => getCardCategory(c) === 'trap')
+  const extra = pool.filter(c => getCardCategory(c) === 'extra')
+  const extraCount = Math.min(EXTRA_DISPLAY_COUNT, extra.length)
+  const mainNeeded = TOTAL_DISPLAY_COUNT - extraCount
+  return main.length >= mainNeeded
+}
 
-  // Doit avoir au moins un monstre
-  if (extra.length === 0 && main.length === 0) return false
-
-  // Doit avoir au moins 1 magie ou 1 piège (un vrai archétype a du support spell/trap)
-  if (spell.length === 0 && trap.length === 0) return false
-
-  // Doit avoir au moins 2 catégories distinctes avec des cartes
-  const categoriesWithCards = [extra, main, spell, trap].filter(arr => arr.length > 0).length
-  if (categoriesWithCards < 2) return false
-
-  // Compter les cartes représentatives par catégorie
-  const counts = [
-    Math.min(extra.length, EXTRA_COUNT),
-    Math.min(main.length, MAIN_COUNT),
-    Math.min(spell.length, SPELL_COUNT),
-    Math.min(trap.length, TRAP_COUNT)
-  ]
-  const total = counts.reduce((a, b) => a + b, 0)
-  return total >= 6
+/** Libellé du type de carte pour l’affichage sous le nom (selon la carte affichée). */
+export function getCardDisplayType (card: YgoCard): string {
+  const t = (card.type ?? '').toLowerCase()
+  const f = (card.frameType ?? '').toLowerCase()
+  if (t.includes('fusion') || f.includes('fusion')) return 'Fusion'
+  if (t.includes('synchro') || f.includes('synchro')) return 'Synchro'
+  if (t.includes('xyz') || f.includes('xyz')) return 'Xyz'
+  if (t.includes('link') || f.includes('link')) return 'Link'
+  if (t.includes('pendulum') || f.includes('pendulum')) return 'Pendulum'
+  if (t.includes('effect') && t.includes('monster')) return 'Effect'
+  if (t.includes('normal') && t.includes('monster')) return 'Normal'
+  if (t.includes('ritual') || f.includes('ritual')) return 'Ritual'
+  if (t.includes('monster')) return 'Main'
+  return 'Main'
 }
 
 /**
- * Retourne exactement 8 cartes dans l'ordre : Extra (2) → Main (2) → Spell (2) → Trap (2).
- * Si une catégorie n'a pas assez de cartes (ex. 1 seul Extra), les slots vides sont remplis
- * par les prochaines meilleures cartes du pool (toutes catégories) pour éviter les « trous » (dos de carte).
+ * Retourne 10 cartes pour affichage : Extra Deck en premier (0–4), puis Main (5–9).
+ * Ordre dans chaque groupe : meilleure à la moins bonne (rareté, ATK/DEF, rééditions, effet, nom).
  */
-export function pickRepresentativeCards (
-  cards: YgoCard[],
-  archetypeName: string,
-  count: number = REPRESENTATIVE_COUNT
-): (YgoCard | undefined)[] {
-  const usePoolFinal = preparePool(cards, archetypeName)
-  if (!usePoolFinal.length) return []
-
-  const extra = sortByRelevance(usePoolFinal.filter(c => getCardCategory(c) === 'extra'), archetypeName)
-  const main = sortByRelevance(usePoolFinal.filter(c => getCardCategory(c) === 'main'), archetypeName)
-  const spell = sortByRelevance(usePoolFinal.filter(c => getCardCategory(c) === 'spell'), archetypeName)
-  const trap = sortByRelevance(usePoolFinal.filter(c => getCardCategory(c) === 'trap'), archetypeName)
-
-  const slots: (YgoCard | undefined)[] = [
-    extra[0], extra[1],
-    main[0], main[1],
-    spell[0], spell[1],
-    trap[0], trap[1]
-  ]
-  const used = new Set<YgoCard>(slots.filter((c): c is YgoCard => c != null))
-  const sortedPool = sortByRelevance(usePoolFinal, archetypeName)
-  const remaining = sortedPool.filter(c => !used.has(c))
-
-  let fillIdx = 0
-  for (let i = 0; i < REPRESENTATIVE_COUNT; i++) {
-    if (slots[i] == null && fillIdx < remaining.length) {
-      slots[i] = remaining[fillIdx++]!
-    }
+export function pickRepresentativeCards (cards: YgoCard[], archetypeName: string): RepresentativeCard[] {
+  const { main, extra } = pick5Main5Extra(cards, archetypeName)
+  const result: RepresentativeCard[] = []
+  for (const c of extra) {
+    result.push({ id: c.id, imageUrl: getCardImageUrl(c), category: 'extra', displayType: getCardDisplayType(c) })
   }
-
-  return slots.slice(0, count)
+  for (const c of main) {
+    result.push({ id: c.id, imageUrl: getCardImageUrl(c), category: 'main', displayType: getCardDisplayType(c) })
+  }
+  return result
 }
 
+/** Une seule carte représentative : meilleure Extra si présente, sinon meilleure Main. */
 export function pickRepresentativeCard (
   cards: YgoCard[],
   archetypeName: string
 ): YgoCard | null {
-  const arr = pickRepresentativeCards(cards, archetypeName, 1)
-  return arr[0] ?? null
+  const { main, extra } = pick5Main5Extra(cards, archetypeName)
+  return extra[0] ?? main[0] ?? null
 }
 
 export const CARD_BACK_IMAGE_URL = '/card-back.png'
 
-/** Préfère image cropped (illustration) si dispo. */
+/** URL artwork cropped depuis le CDN YGOPRODeck (cards_cropped). */
+const CARDS_CROPPED_BASE = 'https://images.ygoprodeck.com/images/cards_cropped/'
+
 export function getCardImageUrl (card: YgoCard): string {
-  const img = card.card_images?.[0]
-  if (img?.image_url_cropped) return img.image_url_cropped
-  if (img?.image_url) return img.image_url
-  return `https://images.ygoprodeck.com/images/cards/${card.id}.jpg`
+  return `${CARDS_CROPPED_BASE}${card.id}.jpg`
 }
 
 /** URL de l'image complète de la carte (design officiel, toute la carte). */
