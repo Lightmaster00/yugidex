@@ -1,6 +1,6 @@
 import type { TournamentState } from '~/types/tournament'
 
-/** Top 10 par Elo décroissant. En mode duels fixe : uniquement les archétypes ayant joué au moins 1 match. */
+/** Top 10 par Elo décroissant parmi les archétypes ayant joué au moins 1 match. */
 export function getTop10 (state: TournamentState): Array<{
   rank: number
   name: string
@@ -9,7 +9,8 @@ export function getTop10 (state: TournamentState): Array<{
   losses: number
   matchesPlayed: number
 }> {
-  // In phase 3 / finished, use phasePool (top 24 finalists). Otherwise, all archetypes.
+  // En phase 3 / finished avec un pool finalisé, utiliser le pool de la phase
+  // Sinon, utiliser tous les archétypes (phase 1/2 ou finish anticipé)
   const names =
     (state.phase === 'phase3' || state.phase === 'finished') && state.phasePool?.length
       ? state.phasePool
@@ -17,8 +18,7 @@ export function getTop10 (state: TournamentState): Array<{
 
   const list = names
     .map(n => ({ name: n, ...state.archetypes[n] }))
-    .filter(a => a.elo != null)
-    .filter(a => ((a.wins ?? 0) + (a.losses ?? 0)) >= 1)
+    .filter(a => a.elo != null && ((a.wins ?? 0) + (a.losses ?? 0)) >= 1)
     .sort((a, b) => (b.elo ?? 0) - (a.elo ?? 0))
     .slice(0, 10)
 

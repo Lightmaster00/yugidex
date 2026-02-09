@@ -148,7 +148,7 @@ export function applyGroupResult (
 /**
  * Avance vers le prochain round ou la prochaine phase quand le round courant est fini.
  */
-function advanceToNextPhaseRound (state: TournamentState): TournamentState {
+export function advanceToNextPhaseRound (state: TournamentState): TournamentState {
   const next = { ...state }
 
   if (state.phase === 'phase1') {

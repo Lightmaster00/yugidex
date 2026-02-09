@@ -24,8 +24,8 @@ export interface ArchetypeState {
   elo: number
   wins: number
   losses: number
-  /** 12 cartes représentatives (3 Extra + 3 Main + 3 Spell + 3 Trap) */
-  representativeCards?: RepresentativeCard[]
+  /** 8 cartes représentatives (2 Extra + 2 Main + 2 Spell + 2 Trap) ; certaines entrées peuvent être undefined si le pool était trop petit. */
+  representativeCards?: (RepresentativeCard | undefined)[]
   /** Index de la carte actuellement affichée dans representativeCards */
   representativeIndex?: number
   /** Rétrocompat: URL et id de la carte affichée (dérivés si representativeCards existe) */
@@ -92,7 +92,7 @@ export const INITIAL_ELO = 1000
 export const COVERAGE_ROUND_COUNT = 2
 /** Phase 2 : fraction du pool retenue (top 50%) */
 export const REFINEMENT_POOL_FRACTION = 0.5
-/** Phase 3 : taille du pool suisse */
+/** Phase 3 : taille du pool suisse (24 finalistes) */
 export const SWISS_POOL_SIZE = 24
 /** Phase 3 : nombre de rounds suisses */
 export const SWISS_ROUND_COUNT = 3

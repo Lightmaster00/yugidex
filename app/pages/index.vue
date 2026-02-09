@@ -2,6 +2,10 @@
 import { t } from '~/utils/i18n'
 import { COVERAGE_ROUND_COUNT, SWISS_ROUND_COUNT } from '~/types/tournament'
 import type { RepresentativeCategory } from '~/types/tournament'
+import { REPRESENTATIVE_EXTRA_COUNT, getFirstCardIndexForCategorySlot } from '~/utils/representativeCard'
+
+/** Nombre de cartes affichées par catégorie lors du cycle (2 ou 3 par type). */
+const SLOTS_PER_CATEGORY = REPRESENTATIVE_EXTRA_COUNT
 const {
   state,
   loading,
@@ -26,29 +30,43 @@ const selectedCard = ref<string | null>(null)
 
 /** Catégorie affichée pour comparer les archétypes entre eux. */
 const CATEGORY_ORDER: RepresentativeCategory[] = ['extra', 'main', 'spell', 'trap']
-const matchDisplayCategoryIdx = ref(0)
+/** Index global du cycle : 0 .. (nb catégories × slots par catégorie) - 1, pour afficher toutes les cartes. */
+const matchDisplayGlobalIdx = ref(0)
 
 /**
- * Catégories présentes dans AU MOINS un archétype du match.
- * Chaque archétype affichera sa carte de cette catégorie s'il en a une, sinon sa meilleure carte.
- * Cela permet de toujours cycler Extra → Main → Spell → Trap même si un archétype n'a pas d'Extra Deck.
+ * Catégories présentes chez TOUS les archétypes du match (chaque archétype a une carte dans les 2 slots de la catégorie).
+ * Utilise l'index de slot pour prendre en compte les cartes de remplissage.
  */
 const availableCategories = computed<RepresentativeCategory[]>(() => {
   const match = state.value?.currentMatch
   if (!match?.length) return CATEGORY_ORDER
-  return CATEGORY_ORDER.filter(cat =>
-    match.some(name => {
+  return CATEGORY_ORDER.filter(cat => {
+    const categoryIdx = CATEGORY_ORDER.indexOf(cat)
+    const base = getFirstCardIndexForCategorySlot(categoryIdx)
+    return match.every(name => {
       const cards = state.value?.archetypes[name]?.representativeCards
-      return cards?.some(c => c.category === cat)
+      return cards?.[base] != null && cards?.[base + 1] != null
     })
-  )
+  })
+})
+
+/** Nombre total d'étapes du cycle (toutes les cartes : chaque catégorie × slots par catégorie). */
+const matchDisplayTotalSteps = computed(() => {
+  const n = availableCategories.value.length
+  return n > 0 ? n * SLOTS_PER_CATEGORY : 1
 })
 
 const matchDisplayCategory = computed<RepresentativeCategory>(() => {
   const avail = availableCategories.value
   if (!avail.length) return 'main'
-  const idx = matchDisplayCategoryIdx.value % avail.length
-  return avail[idx]!
+  const step = matchDisplayGlobalIdx.value % matchDisplayTotalSteps.value
+  const categoryIdx = Math.floor(step / SLOTS_PER_CATEGORY) % avail.length
+  return avail[categoryIdx] ?? 'main'
+})
+
+/** Index de la carte dans la catégorie courante (0 = 1ère carte, 1 = 2ème, etc.). */
+const matchDisplaySlotInCategory = computed(() => {
+  return matchDisplayGlobalIdx.value % SLOTS_PER_CATEGORY
 })
 
 /** Label de la catégorie affichée. */
@@ -58,7 +76,7 @@ function getCurrentMatchCardCategoryLabel (): string | null {
 
 /**
  * Trouve la carte à afficher pour un archétype.
- * En match : cherche la 1ère carte de la catégorie demandée. Si aucune, fallback sur la 1ère carte.
+ * En match : affichage par index de slot (0–7 = Extra×2, Main×2, Spell×2, Trap×2) pour prendre en compte les cartes « de remplissage ».
  * Hors match : utilise l'index de représentation courant.
  */
 function getCurrentRepresentative (archetypeName: string) {
@@ -68,10 +86,19 @@ function getCurrentRepresentative (archetypeName: string) {
   const inMatch = state.value?.currentMatch?.includes(archetypeName)
   if (inMatch) {
     const cat = matchDisplayCategory.value
-    const found = cards.find(c => c.category === cat)
-    return found ?? cards[0]
+    const slot = matchDisplaySlotInCategory.value
+    const categoryIdx = CATEGORY_ORDER.indexOf(cat)
+    const index = getFirstCardIndexForCategorySlot(categoryIdx) + slot
+    return (index < cards.length ? cards[index] : undefined) ?? undefined
   }
-  return cards[entry?.representativeIndex ?? 0] ?? cards[0]
+  const defined = cards.filter((c): c is NonNullable<typeof c> => c != null)
+  return defined[entry?.representativeIndex ?? 0] ?? defined[0]
+}
+
+/** True si l'archétype n'a pas de carte au slot/catégorie courants → afficher le dos de carte. */
+function showCardBack (archetypeName: string): boolean {
+  if (!state.value?.currentMatch?.includes(archetypeName)) return false
+  return getCurrentRepresentative(archetypeName) === undefined
 }
 
 function getCurrentCardName (archetypeName: string): string {
@@ -118,32 +145,48 @@ const isDuelMode = computed(
     state.value?.currentMatch?.length === 2
 )
 
-/** Affiche le bouton "changer carte" si au moins 2 catégories sont disponibles pour tous les archétypes du match. */
-const canCycleAllCards = computed(() => availableCategories.value.length >= 2)
+/** Affiche le bouton "changer carte" s'il y a plus d'une vue (plusieurs catégories ou plusieurs cartes par catégorie). */
+const canCycleAllCards = computed(() => matchDisplayTotalSteps.value > 1)
 
 function cycleAllCards () {
-  const len = availableCategories.value.length || 1
-  matchDisplayCategoryIdx.value = (matchDisplayCategoryIdx.value + 1) % len
+  const total = matchDisplayTotalSteps.value
+  matchDisplayGlobalIdx.value = (matchDisplayGlobalIdx.value + 1) % total
 }
 
-/** Texte du badge de phase. */
-const phaseBadgeText = computed(() => {
+/** Pourcentage de progression de la phase en cours (0–100). */
+const phaseProgressPercent = computed(() => {
   const s = state.value
-  if (!s) return ''
+  if (!s) return 0
   if (s.phase === 'phase1') {
-    return `${i('phase1.badge')} — ${s.groupsCompleted + 1} / ${s.groupsTotal} (${i('round')} ${s.phaseRound + 1}/${COVERAGE_ROUND_COUNT})`
+    const total = s.groupsTotal * COVERAGE_ROUND_COUNT
+    const done = s.phaseRound * s.groupsTotal + s.groupsCompleted
+    return total > 0 ? Math.round((done / total) * 100) : 0
   }
   if (s.phase === 'phase2') {
-    return `${i('phase2.badge')} — ${s.groupsCompleted + 1} / ${s.groupsTotal}`
+    if (!s.groupsTotal) return 0
+    return Math.round((s.groupsCompleted / s.groupsTotal) * 100)
   }
   if (s.phase === 'phase3') {
     const pool = s.phasePool
     const matchesPerRound = Math.floor(pool.length / 2)
-    const swissRound = matchesPerRound > 0 ? Math.floor(s.matchesPlayed.length / matchesPerRound) + 1 : 1
-    const matchInRound = matchesPerRound > 0 ? (s.matchesPlayed.length % matchesPerRound) + 1 : 1
-    return `${i('swissRound')} ${swissRound}/${SWISS_ROUND_COUNT} — ${matchInRound} / ${matchesPerRound}`
+    const total = matchesPerRound * SWISS_ROUND_COUNT
+    if (total <= 0) return 0
+    return Math.round((s.matchesPlayed.length / total) * 100)
   }
-  return ''
+  return 0
+})
+
+/** Texte du badge de phase : nom de la phase + pourcentage. */
+const phaseBadgeText = computed(() => {
+  const s = state.value
+  if (!s || s.phase === 'finished') return ''
+  const label =
+    s.phase === 'phase1'
+      ? i('phase1.badge')
+      : s.phase === 'phase2'
+        ? i('phase2.badge')
+        : i('phase3.badge')
+  return `${label} — ${phaseProgressPercent.value}%`
 })
 
 /** Grid class based on group size. */
@@ -159,8 +202,8 @@ watch(
   () => {
     const s = state.value
     if (s?.currentMatch?.length) {
-      // Toujours commencer par l'Extra Deck (index 0) à chaque nouveau match
-      matchDisplayCategoryIdx.value = 0
+      // Toujours commencer par la première carte (Extra slot 0) à chaque nouveau match
+      matchDisplayGlobalIdx.value = 0
     }
   },
   { immediate: true }
@@ -184,9 +227,7 @@ watch(transitioning, (isTransitioning) => {
           <h1 class="logo">{{ i('header.tournament') }}</h1>
         </div>
         <div v-if="state" class="header-right">
-          <span v-if="state.phase !== 'finished'" class="progress-pill">
-            {{ phaseBadgeText }}
-          </span>
+          <span v-if="state.phase !== 'finished'" class="progress-pill">{{ phaseBadgeText }}</span>
           <button
             v-if="canUndo"
             type="button"
@@ -249,14 +290,23 @@ watch(transitioning, (isTransitioning) => {
             class="duel-section"
           >
             <div class="duel-header">
-              <span class="duel-phase-badge">{{ phaseBadgeText }}</span>
               <p class="duel-instruction">
                 <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
               </p>
             </div>
-            <p v-if="getCurrentMatchCardCategoryLabel()" class="duel-category-label">
-              {{ getCurrentMatchCardCategoryLabel() }}
-            </p>
+            <div v-if="canCycleAllCards || getCurrentMatchCardCategoryLabel()" class="duel-category-row">
+              <button
+                v-if="canCycleAllCards"
+                type="button"
+                class="btn btn-outline btn-sm"
+                @click="cycleAllCards"
+              >
+                {{ i('btn.changeCard') }}
+              </button>
+              <span v-if="getCurrentMatchCardCategoryLabel()" class="duel-category-label">
+                {{ getCurrentMatchCardCategoryLabel() }}
+              </span>
+            </div>
             <div class="cards-grid" :class="groupGridClass">
               <ArchetypeCard
                 v-for="name in state!.currentMatch"
@@ -273,13 +323,9 @@ watch(transitioning, (isTransitioning) => {
                 :card-id="state!.archetypes[name]?.representativeCardId"
                 :image-url="state!.archetypes[name]?.imageUrl"
                 :selected="selectedCard === name"
+                :show-card-back="showCardBack(name)"
                 @select="selectGroup(name)"
               />
-            </div>
-            <div v-if="canCycleAllCards" class="duel-change-cards-wrap">
-              <button type="button" class="btn btn-outline btn-sm" @click="cycleAllCards">
-                {{ i('btn.changeCard') }}
-              </button>
             </div>
           </section>
 
@@ -290,17 +336,27 @@ watch(transitioning, (isTransitioning) => {
             class="duel-section"
           >
             <div class="duel-header">
-              <span class="duel-phase-badge">{{ phaseBadgeText }}</span>
               <p class="duel-instruction">
                 <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
               </p>
             </div>
-            <p v-if="getCurrentMatchCardCategoryLabel()" class="duel-category-label">
-              {{ getCurrentMatchCardCategoryLabel() }}
-            </p>
+            <div v-if="canCycleAllCards || getCurrentMatchCardCategoryLabel()" class="duel-category-row">
+              <button
+                v-if="canCycleAllCards"
+                type="button"
+                class="btn btn-outline btn-sm"
+                @click="cycleAllCards"
+              >
+                {{ i('btn.changeCard') }}
+              </button>
+              <span v-if="getCurrentMatchCardCategoryLabel()" class="duel-category-label">
+                {{ getCurrentMatchCardCategoryLabel() }}
+              </span>
+            </div>
             <div class="duel-arena">
-              <ArchetypeCard
-                :name="duelA"
+              <div class="duel-arena__slot">
+                <ArchetypeCard
+                  :name="duelA"
                 :card-name="getCurrentCardName(duelA)"
                 :frame-type="getCurrentFrameType(duelA)"
                 :image-url-full="getCurrentRepresentative(duelA)?.imageUrlFull"
@@ -314,13 +370,16 @@ watch(transitioning, (isTransitioning) => {
                 :selected="selectedCard === duelA"
                 :show-elo="true"
                 :elo="state!.archetypes[duelA]?.elo ?? 1000"
+                :show-card-back="showCardBack(duelA)"
                 @select="selectDuel(duelA)"
               />
+              </div>
               <div class="duel-vs">
                 <span class="duel-vs__text">VS</span>
               </div>
-              <ArchetypeCard
-                :name="duelB"
+              <div class="duel-arena__slot">
+                <ArchetypeCard
+                  :name="duelB"
                 :card-name="getCurrentCardName(duelB)"
                 :frame-type="getCurrentFrameType(duelB)"
                 :image-url-full="getCurrentRepresentative(duelB)?.imageUrlFull"
@@ -334,13 +393,10 @@ watch(transitioning, (isTransitioning) => {
                 :selected="selectedCard === duelB"
                 :show-elo="true"
                 :elo="state!.archetypes[duelB]?.elo ?? 1000"
+                :show-card-back="showCardBack(duelB)"
                 @select="selectDuel(duelB)"
               />
-            </div>
-            <div v-if="canCycleAllCards" class="duel-change-cards-wrap">
-              <button type="button" class="btn btn-outline btn-sm" @click="cycleAllCards">
-                {{ i('btn.changeCard') }}
-              </button>
+              </div>
             </div>
             <div class="actions">
               <button
@@ -367,7 +423,7 @@ watch(transitioning, (isTransitioning) => {
         </div>
       </div>
 
-      <template v-else-if="state?.phase === 'finished' || top10.length > 0">
+      <template v-else-if="state?.phase === 'finished'">
         <Transition name="results">
           <section key="results" class="results-section">
             <div class="results-header">
@@ -480,7 +536,7 @@ watch(transitioning, (isTransitioning) => {
 
 <style scoped>
 .header {
-  padding: 1.25rem 2rem;
+  padding: 1.35rem 2rem;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, var(--bg-elevated) 0%, rgba(10, 10, 14, 0.95) 100%);
   flex-shrink: 0;
@@ -539,12 +595,28 @@ watch(transitioning, (isTransitioning) => {
   gap: 0.85rem;
 }
 
+.progress-pill {
+  display: inline-block;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid rgba(232, 192, 64, 0.2);
+  border-radius: var(--radius-pill);
+  background: rgba(232, 192, 64, 0.06);
+  white-space: nowrap;
+}
+
 .main {
   max-width: 96rem;
   margin: 0 auto;
-  padding: 0.75rem 2rem 1.5rem;
+  padding: 0.5rem 2rem 2rem;
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .screen-center {
@@ -577,28 +649,17 @@ watch(transitioning, (isTransitioning) => {
   position: absolute;
   inset: 0;
   border-radius: 8px;
-  background: linear-gradient(145deg, #1a1620 0%, #0d0b10 50%, #15121a 100%);
-  border: 2px solid var(--accent);
+  background: url(/card-back.png) center / cover no-repeat;
+  border: 2px solid rgba(232, 192, 64, 0.3);
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(232, 192, 64, 0.2),
     0 6px 24px rgba(0, 0, 0, 0.5);
   backface-visibility: hidden;
 }
 
-.ygo-loader__card-back::after {
-  content: '';
-  position: absolute;
-  inset: 12%;
-  border-radius: 4px;
-  border: 1px solid rgba(232, 192, 64, 0.35);
-  background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(232, 192, 64, 0.08) 0%, transparent 70%);
-  pointer-events: none;
-}
-
 .ygo-loader__card-back--front {
   transform: rotateY(180deg);
-  background: linear-gradient(145deg, #252030 0%, #15121a 100%);
+  background: url(/card-back.png) center / cover no-repeat;
 }
 
 @keyframes ygo-card-spin {
@@ -907,34 +968,12 @@ watch(transitioning, (isTransitioning) => {
   width: 58px;
   aspect-ratio: 421 / 614;
   border-radius: 6px;
-  background:
-    linear-gradient(145deg, rgba(26, 22, 32, 0.9) 0%, rgba(13, 11, 16, 0.95) 50%, rgba(21, 18, 26, 0.9) 100%);
+  background: url(/card-back.png) center / cover no-repeat;
   border: 1.5px solid rgba(232, 192, 64, 0.25);
   animation: start-card-float 5s ease-in-out infinite;
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(232, 192, 64, 0.1);
-}
-
-.start-card-silhouette::before {
-  content: '';
-  position: absolute;
-  inset: 12%;
-  border-radius: 3px;
-  border: 1px solid rgba(232, 192, 64, 0.2);
-  background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(232, 192, 64, 0.06) 0%, transparent 70%);
-}
-
-.start-card-silhouette::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 30%;
-  height: 20%;
-  border-radius: 50%;
-  background: radial-gradient(ellipse at center, rgba(232, 192, 64, 0.12) 0%, transparent 70%);
+    inset 0 1px 0 rgba(232, 192, 64, 0.08);
 }
 
 .start-card-silhouette--l {
@@ -1250,9 +1289,11 @@ watch(transitioning, (isTransitioning) => {
 }
 
 .duel-wrap {
-  min-height: calc(100vh - 56px - 3rem);
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  justify-content: center;
 }
 
 .duel-enter-active,
@@ -1299,15 +1340,38 @@ watch(transitioning, (isTransitioning) => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  min-height: 0;
 }
 
 .duel-header {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
-.duel-change-cards-wrap {
-  margin-top: 2rem;
-  text-align: center;
+.duel-category-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.duel-category-row .duel-category-label {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.duel-category-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 1.25rem;
 }
 
 .btn-sm {
@@ -1315,35 +1379,13 @@ watch(transitioning, (isTransitioning) => {
   font-size: 0.8rem;
 }
 
-.duel-phase-badge {
-  display: inline-block;
-  padding: 0.3rem 0.8rem;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--accent);
-  border: 1px solid rgba(232, 192, 64, 0.25);
-  border-radius: var(--radius-pill);
-  background: rgba(232, 192, 64, 0.06);
-  margin-bottom: 0.5rem;
-  text-shadow: 0 0 12px rgba(232, 192, 64, 0.3);
-  box-shadow: 0 0 16px rgba(232, 192, 64, 0.08);
-}
-
 .duel-instruction {
   margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
 }
 
-.duel-category-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin: -0.25rem 0 0.75rem;
-}
-
+/* Grille de base : centrée, gap uniforme. Les classes -2/-3/-4 définissent la taille des colonnes. */
 .cards-grid {
   display: grid;
   gap: 1.75rem;
@@ -1354,66 +1396,122 @@ watch(transitioning, (isTransitioning) => {
   max-width: 100%;
 }
 
+/* ——— Duel à 4 : cartes plus grandes (2×2 mobile, 4 en ligne desktop) ——— */
 .cards-grid-4 {
   grid-template-columns: repeat(2, minmax(0, 280px));
-  gap: 1.75rem;
+  gap: 1.5rem;
 }
 
-.cards-grid-3 {
-  grid-template-columns: repeat(3, minmax(0, 260px));
-  gap: 1.5rem;
+@media (min-width: 480px) {
+  .cards-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 300px));
+    gap: 1.75rem;
+  }
 }
 
 @media (min-width: 640px) {
   .cards-grid-4 {
     grid-template-columns: repeat(4, minmax(0, 280px));
-    gap: 2.25rem;
+    gap: 2rem;
   }
 }
 
 @media (min-width: 1024px) {
   .cards-grid-4 {
     grid-template-columns: repeat(4, minmax(0, 320px));
-    gap: 2.5rem;
+    gap: 2.25rem;
   }
 }
 
-.cards-grid-2 {
-  grid-template-columns: repeat(2, minmax(0, 320px));
-  max-width: 56rem;
-  margin-left: auto;
-  margin-right: auto;
-  gap: 2.25rem;
+/* ——— Duel à 3 : cartes intermédiaires (empilées mobile, 3 en ligne desktop) ——— */
+.cards-grid-3 {
+  grid-template-columns: repeat(1, minmax(0, 300px));
+  gap: 1.75rem;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 640px) {
+  .cards-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 280px));
+    gap: 2rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .cards-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 320px));
+    gap: 2.25rem;
+  }
+}
+
+/* ——— Duel à 2 : même taille de cartes que la grille à 4 ——— */
+.cards-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 280px));
+  gap: 1.5rem;
+}
+
+@media (min-width: 480px) {
   .cards-grid-2 {
-    grid-template-columns: repeat(2, minmax(0, 360px));
-    gap: 2.75rem;
+    grid-template-columns: repeat(2, minmax(0, 300px));
+    gap: 1.75rem;
+  }
+}
+
+@media (min-width: 640px) {
+  .cards-grid-2 {
+    grid-template-columns: repeat(2, minmax(0, 280px));
+    gap: 2rem;
   }
 }
 
 @media (min-width: 1024px) {
   .cards-grid-2 {
-    grid-template-columns: repeat(2, minmax(0, 400px));
-    gap: 3rem;
+    grid-template-columns: repeat(2, minmax(0, 320px));
+    gap: 2.25rem;
   }
 }
 
-/* Phase 2: duel arena with VS separator */
+/* ——— Phase 3 : duel 1v1 avec VS ——— */
+/* Même taille de cartes que la grille à 4 (.cards-grid-4) : 280 / 300 / 280 / 320 px par breakpoint. */
 .duel-arena {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 1rem;
-  max-width: 56rem;
+  justify-content: center;
+  justify-items: center;
+  gap: 1.25rem;
+  max-width: 60rem;
   margin: 0 auto;
   width: 100%;
 }
 
-@media (min-width: 768px) {
+.duel-arena__slot {
+  width: 100%;
+  max-width: 280px;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+@media (min-width: 480px) {
+  .duel-arena__slot {
+    max-width: 300px;
+  }
+}
+
+@media (min-width: 640px) {
   .duel-arena {
-    gap: 1.5rem;
+    gap: 1.75rem;
+  }
+  .duel-arena__slot {
+    max-width: 280px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .duel-arena {
+    gap: 2.25rem;
+  }
+  .duel-arena__slot {
+    max-width: 320px;
   }
 }
 

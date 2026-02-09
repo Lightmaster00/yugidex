@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { CARD_BACK_IMAGE_URL } from '~/utils/representativeCard'
+
 defineProps<{
   name: string
   cardName?: string
@@ -14,11 +16,20 @@ defineProps<{
   selected?: boolean
   showElo?: boolean
   elo?: number
+  /** Afficher le dos de carte Yu-Gi-Oh! (quand l'archétype n'a pas de carte à ce slot/catégorie). */
+  showCardBack?: boolean
 }>()
 
 const emit = defineEmits<{
   select: []
 }>()
+
+const cardBackImageUrl = CARD_BACK_IMAGE_URL
+const cardBackLoadFailed = ref(false)
+
+function onCardBackError () {
+  cardBackLoadFailed.value = true
+}
 </script>
 
 <template>
@@ -39,7 +50,22 @@ const emit = defineEmits<{
       </div>
 
       <span class="archetype-card__card-wrap">
+        <template v-if="showCardBack">
+          <img
+            v-if="!cardBackLoadFailed"
+            :src="cardBackImageUrl"
+            alt=""
+            class="archetype-card__back-img"
+            @error="onCardBackError"
+          >
+          <div
+            v-else
+            class="archetype-card__back"
+            aria-hidden="true"
+          />
+        </template>
         <YgoCardFrame
+          v-if="!showCardBack"
           :card-name="cardName ?? name"
           :frame-type="frameType"
           :image-url-full="imageUrlFull"
@@ -58,14 +84,16 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
+/* max-width peut être contraint par le parent (ex. .duel-arena__slot) via --archetype-card-max-width */
 .archetype-card {
   display: flex;
   flex-direction: column;
   align-items: center;
   width: 100%;
-  max-width: 320px;
+  max-width: var(--archetype-card-max-width, 100%);
   margin: 0 auto;
   overflow: visible;
+  box-sizing: border-box;
 }
 
 .archetype-card__select-btn {
@@ -146,9 +174,11 @@ const emit = defineEmits<{
 .archetype-card__card-wrap {
   display: block;
   width: 100%;
+  max-width: 100%;
   padding: 6px 0;
   transform-origin: center center;
   transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1), filter 0.3s ease;
+  box-sizing: border-box;
 }
 
 .archetype-card__select-btn:hover .archetype-card__card-wrap {
@@ -197,5 +227,55 @@ const emit = defineEmits<{
 .archetype-card.selected :deep(.ygo-card__full-img),
 .archetype-card.selected :deep(.ygo-card__picture-inner img) {
   filter: drop-shadow(0 0 16px var(--accent-glow));
+}
+
+/* Dos de carte Yu-Gi-Oh! — image depuis l'API (même CDN), ratio 421/614 */
+.archetype-card__back-img {
+  width: 100%;
+  aspect-ratio: 421 / 614;
+  object-fit: cover;
+  border-radius: 10px;
+  display: block;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* Fallback si l'image du dos ne charge pas (CSS) */
+.archetype-card__back {
+  width: 100%;
+  aspect-ratio: 421 / 614;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(145deg, #2a1f18 0%, #1a1210 40%, #0f0c0a 100%);
+  border: 2px solid rgba(180, 140, 90, 0.4);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(200, 160, 100, 0.15);
+  position: relative;
+}
+
+.archetype-card__back::before {
+  content: '';
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse 70% 80% at 50% 50%,
+    rgba(200, 160, 90, 0.35) 0%,
+    rgba(160, 120, 60, 0.2) 40%,
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.archetype-card__back::after {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  border: 2px solid rgba(200, 160, 90, 0.25);
+  border-radius: 50%;
+  pointer-events: none;
 }
 </style>

@@ -180,8 +180,8 @@ export async function hasEnoughRepresentatives (archetypeName: string): Promise<
   return hasValidRepresentatives(cards, archetypeName)
 }
 
-const BATCH_SIZE = 18
-const BATCH_DELAY_MS = 1100
+const BATCH_SIZE = 28
+const BATCH_DELAY_MS = 700
 
 /** Garde uniquement les archétypes qui ont au moins 2 images au bon format. */
 export async function filterArchetypesWithEnoughRepresentatives (
@@ -208,19 +208,23 @@ export async function loadRepresentativesForArchetype (
   const cards = await fetchCardsForArchetype(archetypeName)
   if (!hasValidRepresentatives(cards, archetypeName)) return null
   const top = pickRepresentativeCards(cards, archetypeName)
-  const representativeCards: RepresentativeCard[] = top.map(c => ({
-    id: c.id,
-    imageUrl: getCardImageUrl(c),
-    imageUrlFull: getFullCardImageUrl(c),
-    name: c.name,
-    frameType: c.frameType ?? frameTypeFromCardType(c.type),
-    attribute: c.attribute,
-    level: c.level,
-    race: c.race,
-    atk: c.atk,
-    def: c.def,
-    category: getCardCategory(c)
-  }))
+  const representativeCards: (RepresentativeCard | undefined)[] = top.map(c =>
+    c
+      ? {
+          id: c.id,
+          imageUrl: getCardImageUrl(c),
+          imageUrlFull: getFullCardImageUrl(c),
+          name: c.name,
+          frameType: c.frameType ?? frameTypeFromCardType(c.type),
+          attribute: c.attribute,
+          level: c.level,
+          race: c.race,
+          atk: c.atk,
+          def: c.def,
+          category: getCardCategory(c)
+        }
+      : undefined
+  )
   /* Afficher par défaut la carte la plus importante (index 0, déjà triée par score) */
   const representativeIndex = 0
   return { representativeCards, representativeIndex }
@@ -231,7 +235,8 @@ export async function loadRepresentativeForArchetype (
   archetypeName: string
 ): Promise<{ imageUrl: string; representativeCardId: number } | null> {
   const res = await loadRepresentativesForArchetype(archetypeName)
-  if (!res?.representativeCards.length) return null
-  const cur = res.representativeCards[res.representativeIndex] ?? res.representativeCards[0]
+  const defined = res?.representativeCards?.filter((c): c is RepresentativeCard => c != null) ?? []
+  if (!defined.length) return null
+  const cur = defined[res?.representativeIndex ?? 0] ?? defined[0]
   return { imageUrl: cur.imageUrl, representativeCardId: cur.id }
 }

@@ -12,11 +12,11 @@ const RARITY_ORDER = [
   'Common'
 ] as const
 
-/** Ordre d'affichage : Extra (3) → Main (3) → Spell (3) → Trap (3). */
-export const REPRESENTATIVE_EXTRA_COUNT = 3
-export const REPRESENTATIVE_MAIN_COUNT = 3
-export const REPRESENTATIVE_SPELL_COUNT = 3
-export const REPRESENTATIVE_TRAP_COUNT = 3
+/** Ordre d'affichage : Extra (2) → Main (2) → Spell (2) → Trap (2). 2 ou 3 par type par archétype. */
+export const REPRESENTATIVE_EXTRA_COUNT = 2
+export const REPRESENTATIVE_MAIN_COUNT = 2
+export const REPRESENTATIVE_SPELL_COUNT = 2
+export const REPRESENTATIVE_TRAP_COUNT = 2
 const EXTRA_COUNT = REPRESENTATIVE_EXTRA_COUNT
 const MAIN_COUNT = REPRESENTATIVE_MAIN_COUNT
 const SPELL_COUNT = REPRESENTATIVE_SPELL_COUNT
@@ -403,26 +403,42 @@ export function hasValidRepresentatives (cards: YgoCard[], archetypeName: string
   return total >= 6
 }
 
-/** Retourne les cartes dans l'ordre : Extra (3) → Main (3) → Spell (3) → Trap (3). */
+/**
+ * Retourne exactement 8 cartes dans l'ordre : Extra (2) → Main (2) → Spell (2) → Trap (2).
+ * Si une catégorie n'a pas assez de cartes (ex. 1 seul Extra), les slots vides sont remplis
+ * par les prochaines meilleures cartes du pool (toutes catégories) pour éviter les « trous » (dos de carte).
+ */
 export function pickRepresentativeCards (
   cards: YgoCard[],
   archetypeName: string,
   count: number = REPRESENTATIVE_COUNT
-): YgoCard[] {
+): (YgoCard | undefined)[] {
   const usePoolFinal = preparePool(cards, archetypeName)
   if (!usePoolFinal.length) return []
 
-  const extra = usePoolFinal.filter(c => getCardCategory(c) === 'extra')
-  const main = usePoolFinal.filter(c => getCardCategory(c) === 'main')
-  const spell = usePoolFinal.filter(c => getCardCategory(c) === 'spell')
-  const trap = usePoolFinal.filter(c => getCardCategory(c) === 'trap')
+  const extra = sortByRelevance(usePoolFinal.filter(c => getCardCategory(c) === 'extra'), archetypeName)
+  const main = sortByRelevance(usePoolFinal.filter(c => getCardCategory(c) === 'main'), archetypeName)
+  const spell = sortByRelevance(usePoolFinal.filter(c => getCardCategory(c) === 'spell'), archetypeName)
+  const trap = sortByRelevance(usePoolFinal.filter(c => getCardCategory(c) === 'trap'), archetypeName)
 
-  const out: YgoCard[] = []
-  out.push(...sortByRelevance(extra, archetypeName).slice(0, EXTRA_COUNT))
-  out.push(...sortByRelevance(main, archetypeName).slice(0, MAIN_COUNT))
-  out.push(...sortByRelevance(spell, archetypeName).slice(0, SPELL_COUNT))
-  out.push(...sortByRelevance(trap, archetypeName).slice(0, TRAP_COUNT))
-  return out.slice(0, count)
+  const slots: (YgoCard | undefined)[] = [
+    extra[0], extra[1],
+    main[0], main[1],
+    spell[0], spell[1],
+    trap[0], trap[1]
+  ]
+  const used = new Set<YgoCard>(slots.filter((c): c is YgoCard => c != null))
+  const sortedPool = sortByRelevance(usePoolFinal, archetypeName)
+  const remaining = sortedPool.filter(c => !used.has(c))
+
+  let fillIdx = 0
+  for (let i = 0; i < REPRESENTATIVE_COUNT; i++) {
+    if (slots[i] == null && fillIdx < remaining.length) {
+      slots[i] = remaining[fillIdx++]!
+    }
+  }
+
+  return slots.slice(0, count)
 }
 
 export function pickRepresentativeCard (
@@ -432,6 +448,13 @@ export function pickRepresentativeCard (
   const arr = pickRepresentativeCards(cards, archetypeName, 1)
   return arr[0] ?? null
 }
+
+/**
+ * Dos de carte Yu-Gi-Oh! — image locale (public/card-back.png) pour un affichage fiable.
+ * Le CDN YGOPRODeck ne fournit pas d'URL documentée pour le dos ; tu peux remplacer
+ * ce fichier par une image PNG/JPEG du dos officiel si tu en as une.
+ */
+export const CARD_BACK_IMAGE_URL = '/card-back.png'
 
 /** Préfère image cropped (illustration) si dispo. */
 export function getCardImageUrl (card: YgoCard): string {

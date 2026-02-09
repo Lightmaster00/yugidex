@@ -23,6 +23,7 @@ export function useTournamentState () {
     clearState: clearPersisted,
     ensureRepresentatives,
     cycleRepresentative,
+    advanceToNextPhaseRound,
     getTop10,
     downloadTop10Csv
   } = useTournament()
@@ -99,15 +100,28 @@ export function useTournamentState () {
       // Phase 1 / Phase 2 : groupes pré-calculés
       if (s.phase === 'phase1' || s.phase === 'phase2') {
         const groups = s.currentRoundGroups
-        if (!groups || s.groupsCompleted >= groups.length) return
+        if (!groups || s.groupsCompleted >= groups.length) {
+          // Tous les groupes du round sont terminés (ou skippés) → avancer la phase/round
+          state.value = advanceToNextPhaseRound(s)
+          persistState(state.value)
+          continue
+        }
         const nextGroup = groups[s.groupsCompleted]!
-        state.value = { ...s, currentMatch: nextGroup }
-        state.value = await ensureRepresentatives(state.value, nextGroup)
-        if (state.value?.currentMatch != null) {
+        // Filtrer les archétypes encore présents dans le state
+        const validGroup = nextGroup.filter(n => s.archetypes[n] != null)
+        if (validGroup.length < 2) {
+          // Groupe invalide → sauter
+          state.value = { ...s, groupsCompleted: s.groupsCompleted + 1 }
+          continue
+        }
+        state.value = { ...s, currentMatch: validGroup }
+        state.value = await ensureRepresentatives(state.value, validGroup)
+        if (state.value?.currentMatch != null && state.value.currentMatch.length >= 2) {
           persistState(state.value)
           return
         }
-        // currentMatch null → skip this group, try next
+        // ensureRepresentatives a retiré des archétypes → sauter ce groupe
+        state.value = { ...(state.value ?? s), groupsCompleted: s.groupsCompleted + 1 }
         continue
       }
 
@@ -126,11 +140,11 @@ export function useTournamentState () {
         }
         state.value = { ...s, currentMatch: next }
         state.value = await ensureRepresentatives(state.value, next)
-        if (state.value?.currentMatch != null) {
+        if (state.value?.currentMatch != null && state.value.currentMatch.length === 2) {
           persistState(state.value)
           return
         }
-        // currentMatch null → skip, try next pair
+        // Representatives failed → retry (state updated, archetypes removed)
         continue
       }
 

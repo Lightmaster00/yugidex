@@ -7,6 +7,7 @@ import {
   applyEloResult,
   isPhase3Done,
   undoLastResult,
+  advanceToNextPhaseRound,
   saveState,
   loadState,
   clearState
@@ -14,7 +15,7 @@ import {
 import { downloadTop10Csv, getTop10, exportTop10Csv } from '~/utils/csv'
 import { fetchArchetypes, filterArchetypesWithEnoughRepresentatives } from '~/composables/useYgoApi'
 
-const RATE_LIMIT_MS = 60
+const RATE_LIMIT_MS = 40
 
 function delay (ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
@@ -70,8 +71,10 @@ export function useTournament () {
     await delay(RATE_LIMIT_MS)
     const res = await loadRepresentativesForArchetype(archetypeName)
     if (!res) return removeArchetypeFromState(state, archetypeName)
-    const cur = res.representativeCards[res.representativeIndex] ?? res.representativeCards[0]
-    const { dominantAttribute, dominantRace } = computeDominants(res.representativeCards)
+    const defined = res.representativeCards.filter((c): c is RepresentativeCard => c != null)
+    if (!defined.length) return removeArchetypeFromState(state, archetypeName)
+    const cur = defined[res.representativeIndex ?? 0] ?? defined[0]
+    const { dominantAttribute, dominantRace } = computeDominants(defined)
     const next = { ...state, archetypes: { ...state.archetypes } }
     next.archetypes[archetypeName] = {
       ...state.archetypes[archetypeName],
@@ -85,7 +88,7 @@ export function useTournament () {
     return next
   }
 
-  /** Passe à l'image suivante parmi les représentatives d'un archétype. */
+  /** Passe à l'image suivante parmi les représentatives d'un archétype (ignore les slots undefined). */
   function cycleRepresentative (
     state: TournamentState,
     archetypeName: string
@@ -93,9 +96,14 @@ export function useTournament () {
     const entry = state.archetypes[archetypeName]
     const cards = entry?.representativeCards
     if (!cards?.length) return state
-    const idx = (entry.representativeIndex ?? 0) + 1
-    const nextIndex = idx % cards.length
-    const cur = cards[nextIndex]!
+    const definedIndices = cards.map((c, i) => (c != null ? i : -1)).filter(i => i >= 0)
+    if (!definedIndices.length) return state
+    const currentIdx = entry.representativeIndex ?? 0
+    const pos = definedIndices.indexOf(currentIdx)
+    const nextPos = (pos + 1) % definedIndices.length
+    const nextIndex = definedIndices[nextPos]!
+    const cur = cards[nextIndex]
+    if (!cur) return state
     const next = { ...state, archetypes: { ...state.archetypes } }
     next.archetypes[archetypeName] = {
       ...entry,
@@ -134,6 +142,7 @@ export function useTournament () {
     ensureRepresentative,
     ensureRepresentatives,
     cycleRepresentative,
+    advanceToNextPhaseRound,
     getTop10,
     exportTop10Csv,
     downloadTop10Csv
