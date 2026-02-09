@@ -169,6 +169,13 @@ const translations: Record<string, Record<CardLanguage, string>> = {
     it: 'Round svizzero',
     pt: 'Rodada suíça'
   },
+  'phase3.badge': {
+    en: 'Phase 3',
+    fr: 'Phase 3',
+    de: 'Phase 3',
+    it: 'Fase 3',
+    pt: 'Fase 3'
+  },
   'cardCategory.extra': {
     en: 'Extra Deck',
     fr: 'Extra Deck',

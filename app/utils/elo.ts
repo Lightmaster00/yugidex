@@ -1,5 +1,3 @@
-import { INITIAL_ELO } from '~/types/tournament'
-
 /** Espérance de victoire de A contre B. */
 export function expectedScore (eloA: number, eloB: number): number {
   return 1 / (1 + Math.pow(10, (eloB - eloA) / 400))
@@ -32,5 +30,3 @@ export function applyGroupElo (
     newLosers: loserElos.map((e, i) => e + loserDeltas[i]!)
   }
 }
-
-export { INITIAL_ELO }

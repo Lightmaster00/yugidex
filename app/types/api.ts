@@ -1,6 +1,3 @@
-/** Réponse archetypes.php - liste des noms d'archétypes */
-export type ArchetypesApiResponse = Array<{ archetype_name: string }>
-
 /** Un set dans card_sets (pour rareté et date) */
 export interface CardSetEntry {
   set_name?: string

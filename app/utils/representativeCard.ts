@@ -12,11 +12,11 @@ const RARITY_ORDER = [
   'Common'
 ] as const
 
-/** Ordre d'affichage : Extra (2) → Main (2) → Spell (2) → Trap (2). 2 ou 3 par type par archétype. */
+/** Ordre : Extra (2) → Main (2) → Spell (2) → Trap (2). */
 export const REPRESENTATIVE_EXTRA_COUNT = 2
-export const REPRESENTATIVE_MAIN_COUNT = 2
-export const REPRESENTATIVE_SPELL_COUNT = 2
-export const REPRESENTATIVE_TRAP_COUNT = 2
+const REPRESENTATIVE_MAIN_COUNT = 2
+const REPRESENTATIVE_SPELL_COUNT = 2
+const REPRESENTATIVE_TRAP_COUNT = 2
 const EXTRA_COUNT = REPRESENTATIVE_EXTRA_COUNT
 const MAIN_COUNT = REPRESENTATIVE_MAIN_COUNT
 const SPELL_COUNT = REPRESENTATIVE_SPELL_COUNT
@@ -273,23 +273,10 @@ function isTokenCard (card: YgoCard): boolean {
   return t.includes('token') || f.includes('token')
 }
 
-export type CardCategory = 'extra' | 'main' | 'spell' | 'trap'
+type CardCategory = 'extra' | 'main' | 'spell' | 'trap'
 
-/**
- * Retourne la catégorie de la carte à l’index donné (ordre : Extra → Main → Spell → Trap).
- * Permet d’afficher "Extra Deck", "Monstre", etc. pour comparer des cartes de même type.
- */
-export function getRepresentativeSlotCategory (index: number): CardCategory | null {
-  if (index < 0) return null
-  if (index < EXTRA_COUNT) return 'extra'
-  if (index < EXTRA_COUNT + MAIN_COUNT) return 'main'
-  if (index < EXTRA_COUNT + MAIN_COUNT + SPELL_COUNT) return 'spell'
-  if (index < REPRESENTATIVE_COUNT) return 'trap'
-  return null
-}
-
-/** Index de la première carte de chaque catégorie (0=Extra, 1=Main, 2=Spell, 3=Trap). Pour comparer uniquement ce qui est comparable. */
-export const FIRST_CARD_INDEX_BY_CATEGORY: [number, number, number, number] = [
+/** Index de la première carte de chaque catégorie (0=Extra, 1=Main, 2=Spell, 3=Trap). */
+const FIRST_CARD_INDEX_BY_CATEGORY: [number, number, number, number] = [
   0,
   EXTRA_COUNT,
   EXTRA_COUNT + MAIN_COUNT,
@@ -449,11 +436,6 @@ export function pickRepresentativeCard (
   return arr[0] ?? null
 }
 
-/**
- * Dos de carte Yu-Gi-Oh! — image locale (public/card-back.png) pour un affichage fiable.
- * Le CDN YGOPRODeck ne fournit pas d'URL documentée pour le dos ; tu peux remplacer
- * ce fichier par une image PNG/JPEG du dos officiel si tu en as une.
- */
 export const CARD_BACK_IMAGE_URL = '/card-back.png'
 
 /** Préfère image cropped (illustration) si dispo. */
