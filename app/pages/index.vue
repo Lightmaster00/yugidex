@@ -1,11 +1,11 @@
 <script setup lang="ts">
+import type { YgoCard } from '~/types/api'
 import { t } from '~/utils/i18n'
 import { COVERAGE_ROUND_COUNT, SWISS_ROUND_COUNT } from '~/types/tournament'
-import type { RepresentativeCategory } from '~/types/tournament'
-import { REPRESENTATIVE_EXTRA_COUNT, getFirstCardIndexForCategorySlot } from '~/utils/representativeCard'
+import { MAIN_DISPLAY_COUNT, EXTRA_DISPLAY_COUNT, getCardCategory, getFullCardImageUrl } from '~/utils/representativeCard'
+import { fetchCardsForArchetype } from '~/composables/useYgoApi'
 
-/** Nombre de cartes affichées par catégorie lors du cycle (2 ou 3 par type). */
-const SLOTS_PER_CATEGORY = REPRESENTATIVE_EXTRA_COUNT
+const DISPLAY_STEPS = MAIN_DISPLAY_COUNT + EXTRA_DISPLAY_COUNT
 const {
   state,
   loading,
@@ -28,85 +28,112 @@ const {
 const i = (key: string) => t(key, 'en')
 const selectedCard = ref<string | null>(null)
 
-/** Catégorie affichée pour comparer les archétypes entre eux. */
-const CATEGORY_ORDER: RepresentativeCategory[] = ['extra', 'main', 'spell', 'trap']
-/** Index global du cycle : 0 .. (nb catégories × slots par catégorie) - 1, pour afficher toutes les cartes. */
-const matchDisplayGlobalIdx = ref(0)
+/** Popup résultats : archétype sélectionné (null = fermé). */
+const archetypeModalName = ref<string | null>(null)
+/** Toutes les cartes de l'archétype (fetch API), triées Extra > Main > Spell > Trap puis par nom. */
+const modalAllCards = ref<YgoCard[]>([])
+const modalLoading = ref(false)
+/** Carte sélectionnée (affichée en grand à gauche). */
+const modalCardSelected = ref<YgoCard | null>(null)
+/** Recherche par nom dans la popup. */
+const modalSearch = ref('')
 
-/**
- * Catégories présentes chez TOUS les archétypes du match (chaque archétype a une carte dans les 2 slots de la catégorie).
- * Utilise l'index de slot pour prendre en compte les cartes de remplissage.
- */
-const availableCategories = computed<RepresentativeCategory[]>(() => {
-  const match = state.value?.currentMatch
-  if (!match?.length) return CATEGORY_ORDER
-  return CATEGORY_ORDER.filter(cat => {
-    const categoryIdx = CATEGORY_ORDER.indexOf(cat)
-    const base = getFirstCardIndexForCategorySlot(categoryIdx)
-    return match.every(name => {
-      const cards = state.value?.archetypes[name]?.representativeCards
-      return cards?.[base] != null && cards?.[base + 1] != null
-    })
+const CATEGORY_ORDER: Record<string, number> = { extra: 0, main: 1, spell: 2, trap: 3 }
+
+function sortCardsByCategoryThenName (cards: YgoCard[]): YgoCard[] {
+  return [...cards].sort((a, b) => {
+    const catA = getCardCategory(a)
+    const catB = getCardCategory(b)
+    const orderA = CATEGORY_ORDER[catA] ?? 4
+    const orderB = CATEGORY_ORDER[catB] ?? 4
+    if (orderA !== orderB) return orderA - orderB
+    const nameA = (a.name_en ?? a.name).toLowerCase()
+    const nameB = (b.name_en ?? b.name).toLowerCase()
+    return nameA.localeCompare(nameB)
+  })
+}
+
+/** Filtre par archetype exact (API peut renvoyer des variantes). */
+function filterByArchetype (cards: YgoCard[], archetypeName: string): YgoCard[] {
+  const want = archetypeName.trim().toLowerCase()
+  if (!want) return cards
+  return cards.filter(c => (c.archetype ?? '').trim().toLowerCase() === want)
+}
+
+/** Exclut tokens et cartes personnages Rush Duel (Skill) de la liste. */
+function excludeTokensAndRushDuelCharacters (cards: YgoCard[]): YgoCard[] {
+  return cards.filter(c => {
+    const t = (c.type ?? '').toLowerCase()
+    const f = (c.frameType ?? '').toLowerCase()
+    if (t.includes('token') || f.includes('token')) return false
+    if (t.includes('skill')) return false
+    return true
+  })
+}
+
+const modalCardsFiltered = computed(() => {
+  const list = modalAllCards.value
+  const q = modalSearch.value.trim().toLowerCase()
+  if (!q) return list
+  return list.filter(c => {
+    const name = (c.name_en ?? c.name).toLowerCase()
+    return name.includes(q)
   })
 })
 
-/** Nombre total d'étapes du cycle (toutes les cartes : chaque catégorie × slots par catégorie). */
-const matchDisplayTotalSteps = computed(() => {
-  const n = availableCategories.value.length
-  return n > 0 ? n * SLOTS_PER_CATEGORY : 1
+watch(archetypeModalName, async (name) => {
+  if (!name) {
+    document.body.style.overflow = ''
+    modalAllCards.value = []
+    modalCardSelected.value = null
+    modalSearch.value = ''
+    return
+  }
+  document.body.style.overflow = 'hidden'
+  modalCardSelected.value = null
+  modalSearch.value = ''
+  modalLoading.value = true
+  try {
+    const raw = await fetchCardsForArchetype(name)
+    const byArchetype = filterByArchetype(raw, name)
+    const withoutTokensNorRush = excludeTokensAndRushDuelCharacters(byArchetype)
+    modalAllCards.value = sortCardsByCategoryThenName(withoutTokensNorRush)
+    modalCardSelected.value = modalAllCards.value[0] ?? null
+  } finally {
+    modalLoading.value = false
+  }
 })
 
-const matchDisplayCategory = computed<RepresentativeCategory>(() => {
-  const avail = availableCategories.value
-  if (!avail.length) return 'main'
-  const step = matchDisplayGlobalIdx.value % matchDisplayTotalSteps.value
-  const categoryIdx = Math.floor(step / SLOTS_PER_CATEGORY) % avail.length
-  return avail[categoryIdx] ?? 'main'
-})
-
-/** Index de la carte dans la catégorie courante (0 = 1ère carte, 1 = 2ème, etc.). */
-const matchDisplaySlotInCategory = computed(() => {
-  return matchDisplayGlobalIdx.value % SLOTS_PER_CATEGORY
-})
-
-/** Label de la catégorie affichée. */
-function getCurrentMatchCardCategoryLabel (): string | null {
-  return i('cardCategory.' + matchDisplayCategory.value)
+function closeArchetypeModal () {
+  document.body.style.overflow = ''
+  archetypeModalName.value = null
+  modalAllCards.value = []
+  modalCardSelected.value = null
+  modalSearch.value = ''
 }
 
-/**
- * Trouve la carte à afficher pour un archétype.
- * En match : affichage par index de slot (0–7 = Extra×2, Main×2, Spell×2, Trap×2) pour prendre en compte les cartes « de remplissage ».
- * Hors match : utilise l'index de représentation courant.
- */
+/** Index du cycle (0..9 = 5 Main + 5 Extra). */
+const matchDisplayGlobalIdx = ref(0)
+
+const matchDisplayTotalSteps = computed(() => DISPLAY_STEPS)
+
+/** Carte à afficher pour un archétype. En duel : index 0 = meilleure carte, cycle 0..9 = meilleure → moins bonne. */
 function getCurrentRepresentative (archetypeName: string) {
   const entry = state.value?.archetypes[archetypeName]
   const cards = entry?.representativeCards
   if (!cards?.length) return undefined
   const inMatch = state.value?.currentMatch?.includes(archetypeName)
   if (inMatch) {
-    const cat = matchDisplayCategory.value
-    const slot = matchDisplaySlotInCategory.value
-    const categoryIdx = CATEGORY_ORDER.indexOf(cat)
-    const index = getFirstCardIndexForCategorySlot(categoryIdx) + slot
-    return (index < cards.length ? cards[index] : undefined) ?? undefined
+    const index = matchDisplayGlobalIdx.value % cards.length
+    return cards[index]
   }
-  const defined = cards.filter((c): c is NonNullable<typeof c> => c != null)
-  return defined[entry?.representativeIndex ?? 0] ?? defined[0]
+  const idx = entry?.representativeIndex ?? 0
+  return cards[idx] ?? cards[0]
 }
 
-/** True si l'archétype n'a pas de carte au slot/catégorie courants → afficher le dos de carte. */
 function showCardBack (archetypeName: string): boolean {
   if (!state.value?.currentMatch?.includes(archetypeName)) return false
   return getCurrentRepresentative(archetypeName) === undefined
-}
-
-function getCurrentCardName (archetypeName: string): string {
-  return getCurrentRepresentative(archetypeName)?.name ?? archetypeName
-}
-
-function getCurrentFrameType (archetypeName: string): string | undefined {
-  return getCurrentRepresentative(archetypeName)?.frameType
 }
 
 /** Phase 1/2 : l'utilisateur choisit le gagnant dans un groupe. */
@@ -128,9 +155,6 @@ function selectDuel (name: string) {
   pickDuel(name, loser)
 }
 
-const duelA = computed(() => state.value?.currentMatch?.[0] ?? '')
-const duelB = computed(() => state.value?.currentMatch?.[1] ?? '')
-
 /** Phase 1/2 : groupes de 2-4. */
 const isGroupMode = computed(
   () =>
@@ -145,22 +169,19 @@ const isDuelMode = computed(
     state.value?.currentMatch?.length === 2
 )
 
-/** Affiche le bouton "changer carte" s'il y a plus d'une vue (plusieurs catégories ou plusieurs cartes par catégorie). */
 const canCycleAllCards = computed(() => matchDisplayTotalSteps.value > 1)
 
 function cycleAllCards () {
-  const total = matchDisplayTotalSteps.value
-  matchDisplayGlobalIdx.value = (matchDisplayGlobalIdx.value + 1) % total
+  matchDisplayGlobalIdx.value = (matchDisplayGlobalIdx.value + 1) % matchDisplayTotalSteps.value
 }
 
-/** Pourcentage de progression de la phase en cours (0–100). */
+/** Pourcentage de progression de la phase en cours (0–100). Phase 1 : par round (0→100 chaque round). */
 const phaseProgressPercent = computed(() => {
   const s = state.value
   if (!s) return 0
   if (s.phase === 'phase1') {
-    const total = s.groupsTotal * COVERAGE_ROUND_COUNT
-    const done = s.phaseRound * s.groupsTotal + s.groupsCompleted
-    return total > 0 ? Math.round((done / total) * 100) : 0
+    if (!s.groupsTotal) return 0
+    return Math.round((s.groupsCompleted / s.groupsTotal) * 100)
   }
   if (s.phase === 'phase2') {
     if (!s.groupsTotal) return 0
@@ -176,16 +197,15 @@ const phaseProgressPercent = computed(() => {
   return 0
 })
 
-/** Texte du badge de phase : nom de la phase + pourcentage. */
+/** Texte du badge de phase : Phase 1 = "Round X of 2 — Y%", sinon "Phase — Y%". */
 const phaseBadgeText = computed(() => {
   const s = state.value
   if (!s || s.phase === 'finished') return ''
-  const label =
-    s.phase === 'phase1'
-      ? i('phase1.badge')
-      : s.phase === 'phase2'
-        ? i('phase2.badge')
-        : i('phase3.badge')
+  if (s.phase === 'phase1') {
+    const roundNum = (s.phaseRound ?? 0) + 1
+    return `${i('phase1.badge')} — Round ${roundNum} of ${COVERAGE_ROUND_COUNT} — ${phaseProgressPercent.value}%`
+  }
+  const label = s.phase === 'phase2' ? i('phase2.badge') : i('phase3.badge')
   return `${label} — ${phaseProgressPercent.value}%`
 })
 
@@ -283,10 +303,10 @@ watch(transitioning, (isTransitioning) => {
         class="duel-wrap"
       >
         <Transition name="duel" mode="out-in">
-          <!-- Phase 1 & 2 : Groups of 2-4 -->
+          <!-- Phase 1, 2 et 3 : même grille (4, 3 ou 2 cartes), même composant ArchetypeCard -->
           <section
-            v-if="isGroupMode"
-            :key="`group-${state!.round}`"
+            v-if="isGroupMode || isDuelMode"
+            :key="`match-${state!.phase}-${state!.round}`"
             class="duel-section"
           >
             <div class="duel-header">
@@ -294,111 +314,31 @@ watch(transitioning, (isTransitioning) => {
                 <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
               </p>
             </div>
-            <div v-if="canCycleAllCards || getCurrentMatchCardCategoryLabel()" class="duel-category-row">
+            <div v-if="canCycleAllCards" class="duel-category-row">
               <button
-                v-if="canCycleAllCards"
                 type="button"
                 class="btn btn-outline btn-sm"
                 @click="cycleAllCards"
               >
                 {{ i('btn.changeCard') }}
               </button>
-              <span v-if="getCurrentMatchCardCategoryLabel()" class="duel-category-label">
-                {{ getCurrentMatchCardCategoryLabel() }}
-              </span>
             </div>
             <div class="cards-grid" :class="groupGridClass">
               <ArchetypeCard
                 v-for="name in state!.currentMatch"
                 :key="name"
                 :name="name"
-                :card-name="getCurrentCardName(name)"
-                :frame-type="getCurrentFrameType(name)"
-                :image-url-full="getCurrentRepresentative(name)?.imageUrlFull"
-                :attribute="getCurrentRepresentative(name)?.attribute"
-                :level="getCurrentRepresentative(name)?.level"
-                :race="getCurrentRepresentative(name)?.race"
-                :atk="getCurrentRepresentative(name)?.atk"
-                :def="getCurrentRepresentative(name)?.def"
-                :card-id="state!.archetypes[name]?.representativeCardId"
-                :image-url="state!.archetypes[name]?.imageUrl"
+                :image-url="getCurrentRepresentative(name)?.imageUrl"
+                :card-type="getCurrentRepresentative(name)?.displayType"
                 :selected="selectedCard === name"
+                :show-elo="isDuelMode"
+                :elo="state!.archetypes[name]?.elo ?? 1000"
                 :show-card-back="showCardBack(name)"
-                @select="selectGroup(name)"
+                :extra-policy="state!.archetypes[name]?.extraPolicy"
+                @select="isDuelMode ? selectDuel(name) : selectGroup(name)"
               />
             </div>
-          </section>
-
-          <!-- Phase 3 : Swiss 1v1 duel -->
-          <section
-            v-else-if="isDuelMode"
-            :key="`duel-${state!.round}`"
-            class="duel-section"
-          >
-            <div class="duel-header">
-              <p class="duel-instruction">
-                <span>{{ i('duel.instruction') }}</span>{{ i('duel.instruction.suffix') }}
-              </p>
-            </div>
-            <div v-if="canCycleAllCards || getCurrentMatchCardCategoryLabel()" class="duel-category-row">
-              <button
-                v-if="canCycleAllCards"
-                type="button"
-                class="btn btn-outline btn-sm"
-                @click="cycleAllCards"
-              >
-                {{ i('btn.changeCard') }}
-              </button>
-              <span v-if="getCurrentMatchCardCategoryLabel()" class="duel-category-label">
-                {{ getCurrentMatchCardCategoryLabel() }}
-              </span>
-            </div>
-            <div class="duel-arena">
-              <div class="duel-arena__slot">
-                <ArchetypeCard
-                  :name="duelA"
-                :card-name="getCurrentCardName(duelA)"
-                :frame-type="getCurrentFrameType(duelA)"
-                :image-url-full="getCurrentRepresentative(duelA)?.imageUrlFull"
-                :attribute="getCurrentRepresentative(duelA)?.attribute"
-                :level="getCurrentRepresentative(duelA)?.level"
-                :race="getCurrentRepresentative(duelA)?.race"
-                :atk="getCurrentRepresentative(duelA)?.atk"
-                :def="getCurrentRepresentative(duelA)?.def"
-                :card-id="state!.archetypes[duelA]?.representativeCardId"
-                :image-url="state!.archetypes[duelA]?.imageUrl"
-                :selected="selectedCard === duelA"
-                :show-elo="true"
-                :elo="state!.archetypes[duelA]?.elo ?? 1000"
-                :show-card-back="showCardBack(duelA)"
-                @select="selectDuel(duelA)"
-              />
-              </div>
-              <div class="duel-vs">
-                <span class="duel-vs__text">VS</span>
-              </div>
-              <div class="duel-arena__slot">
-                <ArchetypeCard
-                  :name="duelB"
-                :card-name="getCurrentCardName(duelB)"
-                :frame-type="getCurrentFrameType(duelB)"
-                :image-url-full="getCurrentRepresentative(duelB)?.imageUrlFull"
-                :attribute="getCurrentRepresentative(duelB)?.attribute"
-                :level="getCurrentRepresentative(duelB)?.level"
-                :race="getCurrentRepresentative(duelB)?.race"
-                :atk="getCurrentRepresentative(duelB)?.atk"
-                :def="getCurrentRepresentative(duelB)?.def"
-                :card-id="state!.archetypes[duelB]?.representativeCardId"
-                :image-url="state!.archetypes[duelB]?.imageUrl"
-                :selected="selectedCard === duelB"
-                :show-elo="true"
-                :elo="state!.archetypes[duelB]?.elo ?? 1000"
-                :show-card-back="showCardBack(duelB)"
-                @select="selectDuel(duelB)"
-              />
-              </div>
-            </div>
-            <div class="actions">
+            <div v-if="isDuelMode" class="actions">
               <button
                 type="button"
                 class="btn btn-outline"
@@ -439,12 +379,17 @@ watch(transitioning, (isTransitioning) => {
               <li
                 v-for="row in top10"
                 :key="row.name"
-                class="top-item"
+                class="top-item top-item--clickable"
                 :class="{
                   'top-item--gold': row.rank === 1,
                   'top-item--silver': row.rank === 2,
                   'top-item--bronze': row.rank === 3
                 }"
+                role="button"
+                tabindex="0"
+                @click="archetypeModalName = row.name"
+                @keydown.enter="archetypeModalName = row.name"
+                @keydown.space.prevent="archetypeModalName = row.name"
               >
                 <span class="top-rank">
                   <span v-if="row.rank <= 3" class="top-medal">{{ row.rank === 1 ? '\u{1F451}' : row.rank === 2 ? '\u{1F948}' : '\u{1F949}' }}</span>
@@ -467,6 +412,97 @@ watch(transitioning, (isTransitioning) => {
             </div>
           </section>
         </Transition>
+        <!-- Popup archétype : gauche = carte + infos, droite = recherche + toutes les cartes -->
+        <Teleport to="body">
+          <Transition name="modal">
+            <div
+              v-if="archetypeModalName"
+              class="archetype-modal-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="archetype-modal-title"
+              @click.self="closeArchetypeModal"
+              @wheel.stop
+            >
+              <div class="archetype-modal archetype-modal--two-panels">
+                <div class="archetype-modal__head">
+                  <h2 id="archetype-modal-title" class="archetype-modal__title">
+                    {{ archetypeModalName }}
+                  </h2>
+                  <button
+                    type="button"
+                    class="archetype-modal__close"
+                    aria-label="Fermer"
+                    @click="closeArchetypeModal"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div class="archetype-modal__body">
+                  <template v-if="modalLoading">
+                    <div class="archetype-modal-loading">
+                      <p>Chargement des cartes…</p>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <!-- Partie gauche : carte en grand + infos -->
+                    <div class="archetype-modal__left">
+                      <template v-if="modalCardSelected">
+                        <img
+                          :src="getFullCardImageUrl(modalCardSelected)"
+                          :alt="(modalCardSelected.name_en ?? modalCardSelected.name)"
+                          class="archetype-modal__card-large"
+                        >
+                        <div class="archetype-modal__info">
+                          <h3 class="archetype-modal__card-name">{{ modalCardSelected.name_en ?? modalCardSelected.name }}</h3>
+                          <p class="archetype-modal__card-type">{{ modalCardSelected.type }}</p>
+                          <template v-if="modalCardSelected.atk != null">
+                            <p class="archetype-modal__stat">ATK / DEF : {{ modalCardSelected.atk }} / {{ modalCardSelected.def ?? '?' }}</p>
+                          </template>
+                          <template v-else-if="modalCardSelected.level != null">
+                            <p class="archetype-modal__stat">Level : {{ modalCardSelected.level }}</p>
+                          </template>
+                          <p v-if="modalCardSelected.race" class="archetype-modal__stat">{{ modalCardSelected.race }}{{ modalCardSelected.attribute ? ' · ' + modalCardSelected.attribute : '' }}</p>
+                          <p v-if="modalCardSelected.desc" class="archetype-modal__desc">{{ modalCardSelected.desc }}</p>
+                        </div>
+                      </template>
+                      <p v-else class="archetype-modal__no-card">Aucune carte</p>
+                    </div>
+                    <!-- Partie droite : recherche + grille de cartes complètes -->
+                    <div class="archetype-modal__right">
+                      <input
+                        v-model.trim="modalSearch"
+                        type="search"
+                        class="archetype-modal__search"
+                        placeholder="Rechercher par nom…"
+                        aria-label="Rechercher une carte"
+                      >
+                      <div class="archetype-modal__list-wrap">
+                        <button
+                          v-for="card in modalCardsFiltered"
+                          :key="card.id"
+                          type="button"
+                          class="archetype-modal__card-thumb"
+                          :class="{ 'archetype-modal__card-thumb--selected': modalCardSelected?.id === card.id }"
+                          @click="modalCardSelected = card"
+                        >
+                          <img
+                            :src="getFullCardImageUrl(card)"
+                            :alt="(card.name_en ?? card.name)"
+                            class="archetype-modal__card-thumb-img"
+                          >
+                        </button>
+                      </div>
+                      <p v-if="modalCardsFiltered.length === 0" class="archetype-modal__empty">
+                        Aucune carte ne correspond à la recherche.
+                      </p>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </Transition>
+        </Teleport>
       </template>
 
       <div v-else-if="!state && !loading" class="start-screen">
@@ -1353,7 +1389,7 @@ watch(transitioning, (isTransitioning) => {
   justify-content: center;
   gap: 0.75rem;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: 2rem;
 }
 
 .duel-category-row .duel-category-label {
@@ -1468,96 +1504,6 @@ watch(transitioning, (isTransitioning) => {
     grid-template-columns: repeat(2, minmax(0, 320px));
     gap: 2.25rem;
   }
-}
-
-/* ——— Phase 3 : duel 1v1 avec VS ——— */
-/* Même taille de cartes que la grille à 4 (.cards-grid-4) : 280 / 300 / 280 / 320 px par breakpoint. */
-.duel-arena {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  justify-content: center;
-  justify-items: center;
-  gap: 1.25rem;
-  max-width: 60rem;
-  margin: 0 auto;
-  width: 100%;
-}
-
-.duel-arena__slot {
-  width: 100%;
-  max-width: 280px;
-  min-width: 0;
-  box-sizing: border-box;
-}
-
-@media (min-width: 480px) {
-  .duel-arena__slot {
-    max-width: 300px;
-  }
-}
-
-@media (min-width: 640px) {
-  .duel-arena {
-    gap: 1.75rem;
-  }
-  .duel-arena__slot {
-    max-width: 280px;
-  }
-}
-
-@media (min-width: 1024px) {
-  .duel-arena {
-    gap: 2.25rem;
-  }
-  .duel-arena__slot {
-    max-width: 320px;
-  }
-}
-
-.duel-vs {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-}
-
-.duel-vs::before,
-.duel-vs::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 1px;
-  height: 3rem;
-  background: linear-gradient(180deg, transparent, rgba(232, 192, 64, 0.2), transparent);
-}
-
-.duel-vs::before {
-  bottom: calc(100% + 0.5rem);
-}
-
-.duel-vs::after {
-  top: calc(100% + 0.5rem);
-}
-
-.duel-vs__text {
-  font-family: 'Outfit', sans-serif;
-  font-size: clamp(0.9rem, 2vw, 1.3rem);
-  font-weight: 800;
-  color: var(--accent);
-  letter-spacing: 0.08em;
-  text-shadow: 0 0 20px rgba(232, 192, 64, 0.4);
-  animation: vs-pulse 2s ease-in-out infinite;
-  padding: 0.35rem 0.6rem;
-  border: 1px solid rgba(232, 192, 64, 0.15);
-  border-radius: var(--radius-sm);
-  background: rgba(232, 192, 64, 0.04);
-}
-
-@keyframes vs-pulse {
-  0%, 100% { opacity: 1; text-shadow: 0 0 20px rgba(232, 192, 64, 0.4); }
-  50% { opacity: 0.85; text-shadow: 0 0 30px rgba(232, 192, 64, 0.6); }
 }
 
 .actions {
@@ -1694,6 +1640,15 @@ watch(transitioning, (isTransitioning) => {
   background: var(--bg-card-hover);
 }
 
+.top-item--clickable {
+  cursor: pointer;
+}
+
+.top-item--clickable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .top-rank {
   font-weight: 800;
   color: var(--accent);
@@ -1734,5 +1689,268 @@ watch(transitioning, (isTransitioning) => {
   font-size: 0.72rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* ——— Popup archétype (résultats) ——— */
+.archetype-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(6px);
+  box-sizing: border-box;
+}
+
+.archetype-modal {
+  width: 100%;
+  max-width: 42rem;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.archetype-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.archetype-modal__title {
+  margin: 0;
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.archetype-modal__close {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+}
+
+.archetype-modal__close:hover {
+  color: var(--text);
+  background: var(--bg-elevated);
+}
+
+.archetype-modal__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.archetype-modal--two-panels {
+  max-width: 56rem;
+  max-height: 90vh;
+}
+
+.archetype-modal__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.archetype-modal-loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.archetype-modal__left {
+  width: 42%;
+  min-width: 240px;
+  padding: 1.25rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  border-right: 1px solid var(--border);
+}
+
+.archetype-modal__card-large {
+  width: 100%;
+  max-width: 280px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  display: block;
+}
+
+.archetype-modal__info {
+  width: 100%;
+  max-width: 280px;
+  text-align: left;
+}
+
+.archetype-modal__card-name {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.archetype-modal__card-type {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.archetype-modal__stat {
+  margin: 0 0 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.archetype-modal__desc {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.archetype-modal__no-card {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.archetype-modal__right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  overflow: hidden;
+}
+
+.archetype-modal__search {
+  width: 100%;
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.archetype-modal__search::placeholder {
+  color: var(--text-muted);
+}
+
+.archetype-modal__search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.archetype-modal__list-wrap {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 0.6rem;
+  align-content: start;
+}
+
+.archetype-modal__card-thumb {
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+  transition: border-color 0.2s, transform 0.15s;
+}
+
+.archetype-modal__card-thumb:hover {
+  transform: scale(1.02);
+}
+
+.archetype-modal__card-thumb--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.archetype-modal__card-thumb:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.archetype-modal__card-thumb-img {
+  width: 100%;
+  display: block;
+  border-radius: calc(var(--radius-sm) - 2px);
+}
+
+.archetype-modal__empty {
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .archetype-modal__body {
+    flex-direction: column;
+  }
+  .archetype-modal__left {
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 45vh;
+  }
+  .archetype-modal__right {
+    min-height: 200px;
+  }
+  .archetype-modal__list-wrap {
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  }
+}
+
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.25s var(--ease);
+}
+
+.modal-enter-active .archetype-modal,
+.modal-leave-active .archetype-modal {
+  transition: transform 0.25s var(--ease);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-from .archetype-modal,
+.modal-leave-to .archetype-modal {
+  transform: scale(0.95);
 }
 </style>
