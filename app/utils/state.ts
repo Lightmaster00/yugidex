@@ -20,7 +20,7 @@ function uuid (): string {
   )
 }
 
-/** Mélange Fisher-Yates avec seed (pour reproductibilité). */
+/** Fisher-Yates shuffle with seed (for reproducibility). */
 export function seededShuffle<T> (arr: T[], seed: number): T[] {
   const out = [...arr]
   let s = seed
@@ -33,7 +33,7 @@ export function seededShuffle<T> (arr: T[], seed: number): T[] {
 }
 
 /**
- * Crée l'état initial et pré-calcule les groupes du premier round de Phase 1.
+ * Creates initial state and pre-computes groups for the first round of Phase 1.
  */
 export function createInitialState (
   archetypeNames: string[],
@@ -68,7 +68,7 @@ export function createInitialState (
   }
 }
 
-/** Retourne le top N archétypes triés par Elo desc. */
+/** Returns the top N archetypes sorted by Elo desc. */
 export function getTopByElo (
   archetypes: Record<string, ArchetypeState>,
   pool: string[],
@@ -80,8 +80,8 @@ export function getTopByElo (
 }
 
 /**
- * Applique le résultat d'un groupe (phase 1 ou 2).
- * Retourne le nouvel état avec transition de phase/round si nécessaire.
+ * Applies the result of a group (phase 1 or 2).
+ * Returns the new state with phase/round transition if needed.
  */
 export function applyGroupResult (
   state: TournamentState,
@@ -128,7 +128,7 @@ export function applyGroupResult (
       winner,
       losers: [...losers],
       eloDelta,
-      // Snapshot pour restauration lors d'un undo de transition de phase/round
+      // Snapshot for restore on phase/round transition undo
       ...(willAdvance ? {
         prevGroups: state.currentRoundGroups,
         prevPhasePool: [...state.phasePool],
@@ -138,7 +138,7 @@ export function applyGroupResult (
     }
   }
 
-  // Round terminé ?
+  // Round finished?
   if (willAdvance) {
     return advanceToNextPhaseRound(next)
   }
@@ -146,7 +146,7 @@ export function applyGroupResult (
 }
 
 /**
- * Avance vers le prochain round ou la prochaine phase quand le round courant est fini.
+ * Advances to the next round or next phase when the current round is finished.
  */
 export function advanceToNextPhaseRound (state: TournamentState): TournamentState {
   const next = { ...state }
@@ -154,7 +154,7 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
   if (state.phase === 'phase1') {
     const nextPhaseRound = state.phaseRound + 1
     if (nextPhaseRound >= COVERAGE_ROUND_COUNT) {
-      // → Phase 2 : top 50%, groupes de 3 (thème / proximité Elo)
+      // → Phase 2: top 50%, groups of 3 (theme / Elo proximity)
       const poolSize = Math.max(4, Math.ceil(state.remainingNames.length * REFINEMENT_POOL_FRACTION))
       const pool = getTopByElo(state.archetypes, state.remainingNames, poolSize)
       const groups = buildEloProximityGroups(pool, state.archetypes, state.seed + 5000, 3)
@@ -166,7 +166,7 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
       next.phasePool = pool
       return next
     }
-    // Round suivant en phase 1 : groupes par proximité Elo
+    // Next round in phase 1: groups by Elo proximity
     const groups = buildEloProximityGroups(
       state.remainingNames,
       state.archetypes,
@@ -180,7 +180,7 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
   }
 
   if (state.phase === 'phase2') {
-    // → Phase 3 : top 24 en Swiss
+    // → Phase 3: top 24 Swiss
     const poolSize = Math.min(SWISS_POOL_SIZE, state.phasePool.length)
     const pool = getTopByElo(state.archetypes, state.phasePool, poolSize)
     next.phase = 'phase3'
@@ -196,7 +196,7 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
   return state
 }
 
-/** Applique le résultat d'un duel 1v1 (Phase 3 Swiss). */
+/** Applies the result of a 1v1 duel (Phase 3 Swiss). */
 export function applyEloResult (
   state: TournamentState,
   winner: string,
@@ -231,7 +231,7 @@ export function applyEloResult (
   }
 }
 
-/** Vérifie si Phase 3 est terminée (nombre de rounds Swiss atteint). */
+/** Checks if Phase 3 is done (Swiss round count reached). */
 export function isPhase3Done (state: TournamentState): boolean {
   if (state.phase !== 'phase3') return false
   const pool = state.phasePool
@@ -241,7 +241,7 @@ export function isPhase3Done (state: TournamentState): boolean {
   return state.matchesPlayed.length >= totalSwissMatches
 }
 
-/** Annule le dernier choix. Retourne l'état réverti ou null si rien à annuler. */
+/** Cancels the last choice. Returns the reverted state or null if nothing to undo. */
 export function undoLastResult (state: TournamentState): TournamentState | null {
   const last = state.lastMatchResult
   if (!last) return null
@@ -253,7 +253,7 @@ export function undoLastResult (state: TournamentState): TournamentState | null 
     round: Math.max(0, state.round - 1)
   }
 
-  // Restaurer les Elo via les deltas sauvegardés
+  // Restore Elo via saved deltas
   if (last.eloDelta) {
     for (const { name, delta } of last.eloDelta) {
       const entry = state.archetypes[name]
@@ -275,9 +275,9 @@ export function undoLastResult (state: TournamentState): TournamentState | null 
         losses: Math.max(0, prev.archetypes[l]!.losses - 1)
       }
     }
-    // Remettre le match en cours et décrémenter groupsCompleted
+    // Restore current match and decrement groupsCompleted
     prev.currentMatch = last.match
-    // Si on était passé à la phase suivante, restaurer depuis le snapshot
+    // If we had moved to the next phase, restore from snapshot
     if (state.phase !== last.phase && last.prevGroups !== undefined) {
       prev.phase = last.phase
       prev.currentRoundGroups = last.prevGroups
@@ -311,7 +311,7 @@ export function undoLastResult (state: TournamentState): TournamentState | null 
     }
     prev.matchesPlayed = state.matchesPlayed.slice(0, -1)
     prev.currentMatch = last.match
-    // Si on était passé à 'finished', revenir à phase3
+    // If we had moved to 'finished', go back to phase3
     if (state.phase === 'finished') {
       prev.phase = 'phase3'
     }

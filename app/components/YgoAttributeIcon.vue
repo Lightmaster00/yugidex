@@ -1,8 +1,8 @@
 <script setup lang="ts">
-/** Icône d'attribut ou Spell/Trap pour le layout carte Yu-Gi-Oh! (style officiel) */
+/** Attribute or Spell/Trap icon for Yu-Gi-Oh! card layout (official style) */
 defineProps<{
   attribute?: string
-  /** 'spell' | 'trap' pour les cartes Magie/Piège */
+  /** 'spell' | 'trap' for Spell/Trap cards */
   cardKind?: 'spell' | 'trap'
 }>()
 </script>
@@ -30,11 +30,11 @@ defineProps<{
     <svg v-else-if="attribute === 'EARTH'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="attr-svg">
       <path d="M4 18l4-6h3l2 4 3-8 4 10H4zm16-12l-2 5h-3l-2-4H8L5 14H2l2-12h16z"/>
     </svg>
-    <!-- WIND: spirale -->
+    <!-- WIND: spiral -->
     <svg v-else-if="attribute === 'WIND'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="attr-svg">
       <path d="M12 2c.5 0 1 .4 1 1v2c0 .6-.5 1-1 1s-1-.4-1-1V3c0-.6.5-1 1-1zm0 16c.5 0 1 .4 1 1v2c0 .6-.5 1-1 1s-1-.4-1-1v-2c0-.6.5-1 1-1zm8-8c.5 0 1 .4 1 1v2c0 .6-.5 1-1 1s-1-.4-1-1v-2c0-.6.5-1 1-1zM4 10c.5 0 1 .4 1 1v2c0 .6-.5 1-1 1s-1-.4-1-1v-2c0-.6.5-1 1-1zm14.1-5.5c.4.4.4 1 0 1.4l-1.4 1.4c-.4.4-1 .4-1.4 0s-.4-1 0-1.4l1.4-1.4c.4-.4 1-.4 1.4 0zM6.3 17.7c.4.4.4 1 0 1.4l-1.4 1.4c-.4.4-1 .4-1.4 0s-.4-1 0-1.4l1.4-1.4c.4-.4 1-.4 1.4 0zm11.4 0c.4-.4.4-1 0-1.4l-1.4-1.4c-.4-.4-1-.4-1.4 0s-.4 1 0 1.4l1.4 1.4c.4.4 1 .4 1.4 0zM6.3 6.3c.4-.4.4-1 0-1.4L4.9 3.5c-.4-.4-1-.4-1.4 0s-.4 1 0 1.4l1.4 1.4c.4.4 1 .4 1.4 0z"/>
     </svg>
-    <!-- DIVINE: ankh simplifié -->
+    <!-- DIVINE: simplified ankh -->
     <svg v-else-if="attribute === 'DIVINE'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="attr-svg">
       <path d="M12 2l1 4h-2l1-4zm0 6v12h-2V8H8V6h8v2h-2v2h-2zm-4 4h2v6H8v-6zm8 0h2v6h-2v-6zM12 4l-2 8h4L12 4z"/>
     </svg>

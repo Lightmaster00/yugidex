@@ -1,31 +1,62 @@
-/* Yu-Gi-Oh! Archetype Tournament – impactful, modern */
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Outfit:wght@500;600;700&display=swap');
+/* Yu-Gi-Oh! Archetype Tournament – immersive dark UI */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Outfit:wght@500;600;700;800&display=swap');
 
 html {
   color-scheme: dark;
 }
 
 :root {
-  --bg: #060608;
-  --bg-elevated: #0a0a0e;
-  --bg-card: #0e0e12;
-  --bg-card-hover: #121218;
-  --border: rgba(255, 255, 255, 0.07);
+  /* ── Surfaces ── */
+  --bg: #050507;
+  --bg-elevated: #0a0a0f;
+  --bg-card: #0c0c12;
+  --bg-card-hover: #111118;
+  --bg-glass: rgba(12, 12, 18, 0.65);
+  --bg-glass-strong: rgba(12, 12, 18, 0.85);
+
+  /* ── Borders ── */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-subtle: rgba(255, 255, 255, 0.04);
   --border-focus: rgba(232, 197, 71, 0.5);
-  --accent: #e8c040;
-  --accent-soft: rgba(232, 192, 64, 0.18);
-  --accent-glow: rgba(232, 192, 64, 0.25);
-  --text: #f8f8f6;
-  --text-secondary: #a8a8b0;
-  --text-muted: #686870;
+  --border-glass: rgba(255, 255, 255, 0.08);
+
+  /* ── Accent / Gold ── */
+  --accent: #e8c547;
+  --accent-dim: #c9a020;
+  --accent-soft: rgba(232, 197, 71, 0.15);
+  --accent-glow: rgba(232, 197, 71, 0.25);
+  --accent-glow-strong: rgba(232, 197, 71, 0.45);
+
+  /* ── Text ── */
+  --text: #f4f4f2;
+  --text-secondary: #a0a0a8;
+  --text-muted: #606068;
+
+  /* ── Semantic ── */
   --prev: #6ba3f7;
-  --prev-bg: rgba(107, 163, 247, 0.12);
+  --prev-bg: rgba(107, 163, 247, 0.10);
+  --success: #34d399;
+  --danger: #f87171;
+
+  /* ── Radius ── */
   --radius: 14px;
   --radius-sm: 10px;
+  --radius-xs: 6px;
   --radius-pill: 999px;
+
+  /* ── Easing ── */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
   --ease-bounce: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 20px rgba(232, 197, 71, 0.15);
+  --shadow-glow-strong: 0 0 40px rgba(232, 197, 71, 0.25);
 }
 
 * {
@@ -39,6 +70,7 @@ body {
   font-family: 'DM Sans', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 .app-bg {
@@ -46,25 +78,32 @@ body {
   display: flex;
   flex-direction: column;
   background:
-    radial-gradient(ellipse 120% 50% at 50% -10%, rgba(232, 192, 64, 0.06) 0%, transparent 55%),
-    radial-gradient(ellipse 80% 50% at 80% 100%, rgba(232, 192, 64, 0.02) 0%, transparent 50%),
+    radial-gradient(ellipse 120% 50% at 50% -10%, rgba(232, 197, 71, 0.05) 0%, transparent 55%),
+    radial-gradient(ellipse 80% 50% at 80% 100%, rgba(232, 197, 71, 0.02) 0%, transparent 50%),
     var(--bg);
 }
 
-/* Buttons */
+/* ======= Buttons ======= */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.7rem 1.35rem;
+  padding: 0.65rem 1.35rem;
   font-family: inherit;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   border-radius: var(--radius-sm);
   border: none;
   cursor: pointer;
-  transition: background 0.2s var(--ease), color 0.2s var(--ease), transform 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  transition:
+    background 0.2s var(--ease),
+    color 0.2s var(--ease),
+    transform 0.15s var(--ease),
+    box-shadow 0.2s var(--ease),
+    border-color 0.2s var(--ease);
+  position: relative;
+  overflow: hidden;
 }
 
 .btn:focus-visible {
@@ -72,22 +111,28 @@ body {
   outline-offset: 2px;
 }
 
+.btn:active {
+  transform: scale(0.97);
+}
+
 .btn-gold {
-  background: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 0%, #d4a820 100%);
   color: #08080a;
-  box-shadow: 0 2px 12px rgba(232, 192, 64, 0.25);
+  box-shadow: 0 2px 12px rgba(232, 197, 71, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  font-weight: 700;
 }
 
 .btn-gold:hover {
-  filter: brightness(1.08);
+  filter: brightness(1.1);
   transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(232, 192, 64, 0.35);
+  box-shadow: 0 4px 24px rgba(232, 197, 71, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.15);
 }
 
 .btn-outline {
-  background: transparent;
+  background: var(--bg-glass);
   color: var(--text-secondary);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-glass);
+  backdrop-filter: blur(8px);
 }
 
 .btn-outline:hover {
@@ -99,11 +144,13 @@ body {
 .btn-prev {
   background: var(--prev-bg);
   color: var(--prev);
-  border: 1px solid rgba(107, 163, 247, 0.25);
+  border: 1px solid rgba(107, 163, 247, 0.2);
+  backdrop-filter: blur(8px);
 }
 
 .btn-prev:hover {
-  background: rgba(107, 163, 247, 0.18);
+  background: rgba(107, 163, 247, 0.16);
+  border-color: rgba(107, 163, 247, 0.3);
 }
 
 .btn-reset {
@@ -115,10 +162,10 @@ body {
 .btn-reset:hover {
   color: var(--text-secondary);
   background: var(--bg-card-hover);
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
-/* Progress – visible, rewarding */
+/* ======= Progress ======= */
 .progress-block {
   display: flex;
   align-items: center;
@@ -130,29 +177,27 @@ body {
   flex: 1;
   min-width: 100px;
   max-width: 220px;
-  height: 8px;
-  background: var(--bg-card);
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
   border-radius: var(--radius-pill);
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .progress-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-soft), var(--accent));
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
   border-radius: var(--radius-pill);
   transition: width 0.4s var(--ease-out);
-  box-shadow: 0 0 12px var(--accent-glow);
+  box-shadow: 0 0 8px var(--accent-glow);
 }
 
 .progress-pct {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: var(--accent);
   min-width: 2.5rem;
   text-align: right;
-  text-shadow: 0 0 20px var(--accent-glow);
 }
 
 .progress-pill {
@@ -162,7 +207,7 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
 }
 
@@ -181,4 +226,28 @@ body {
 .duel-instruction span {
   color: var(--accent);
   font-weight: 700;
+}
+
+/* ======= Scrollbar ======= */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* ======= Selection ======= */
+::selection {
+  background: rgba(232, 197, 71, 0.25);
+  color: var(--text);
 }

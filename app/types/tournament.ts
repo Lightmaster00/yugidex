@@ -1,34 +1,34 @@
-/** Catégorie de carte dans le slot de représentants (monstres uniquement pour 5+5). */
+/** Card category in the representative slot (monsters only for 5+5). */
 export type RepresentativeCategory = 'extra' | 'main' | 'spell' | 'trap'
 
-/** Une carte représentative — affichage artwork uniquement (image_url_cropped). */
+/** A representative card — artwork display only (image_url_cropped). */
 export interface RepresentativeCard {
   id: number
-  /** URL image cropped (artwork uniquement, pas de cadre ni stats). */
+  /** Cropped image URL (artwork only, no frame or stats). */
   imageUrl: string
-  /** Catégorie : main / extra pour la grille 5+5. */
+  /** Category: main / extra for the 5+5 grid. */
   category?: 'main' | 'extra'
-  /** Type affiché sous le nom (Fusion, Synchro, Xyz, Link, Main, Pendulum, etc.). */
+  /** Type displayed under the name (Fusion, Synchro, Xyz, Link, Main, Pendulum, etc.). */
   displayType?: string
 }
 
 import type { ExtraPolicy, ArchetypeProfile } from '~/types/ranking'
 export type { ExtraPolicy, ArchetypeProfile } from '~/types/ranking'
 
-/** Données d'un archétype dans l'état du tournoi (préférence esthétique). */
+/** Archetype data in tournament state (aesthetic preference). */
 export interface ArchetypeState {
   elo: number
   wins: number
   losses: number
-  /** 5 Main + 5 Extra (artworks uniquement), ordre stable. */
+  /** 5 Main + 5 Extra (artworks only), stable order. */
   representativeCards?: RepresentativeCard[]
-  /** Index de la carte actuellement affichée (cycle hors match). */
+  /** Index of the card currently displayed (cycle when not in match). */
   representativeIndex?: number
-  /** Tag Extra Deck : No Extra / Fusion / Synchro / Xyz / Link. */
+  /** Extra Deck tag: No Extra / Fusion / Synchro / Xyz / Link. */
   extraPolicy?: ExtraPolicy
-  /** Profil esthétique (race, attribute, nameTokens) pour similarité. */
+  /** Aesthetic profile (race, attribute, nameTokens) for similarity. */
   profile?: ArchetypeProfile
-  /** Rétrocompat */
+  /** Backward compat */
   imageUrl?: string
   representativeCardId?: number
   dominantAttribute?: string
@@ -44,38 +44,38 @@ export interface TournamentState {
   seed: number
   phase: TournamentPhase
   archetypes: Record<string, ArchetypeState>
-  /** Tous les noms d'archétypes du tournoi */
+  /** All archetype names in the tournament */
   remainingNames: string[]
-  /** Paires déjà jouées (phase 3 Suisse). Clé "A|B" avec A < B. */
+  /** Pairs already played (Phase 3 Swiss). Key "A|B" with A < B. */
   matchesPlayed: string[]
-  /** Match en cours : 4-way [n1..n4] ou 1v1 [n1,n2] */
+  /** Current match: 4-way [n1..n4] or 1v1 [n1,n2] */
   currentMatch: string[] | null
-  /** Round global (incrémenté à chaque choix) */
+  /** Global round (incremented on each choice) */
   round: number
-  /** Taille du pool au démarrage */
+  /** Pool size at start */
   initialPoolSize?: number
 
-  /** Sous-round dans la phase courante (0-indexed) */
+  /** Sub-round in current phase (0-indexed) */
   phaseRound: number
-  /** Nombre de groupes résolus dans le round courant */
+  /** Number of groups resolved in the current round */
   groupsCompleted: number
-  /** Nombre total de groupes dans le round courant */
+  /** Total number of groups in the current round */
   groupsTotal: number
-  /** Groupes pré-calculés pour le round courant (phase 1/2) */
+  /** Pre-computed groups for the current round (phase 1/2) */
   currentRoundGroups: string[][] | null
-  /** Pool d'archétypes pour la phase courante (sous-ensemble de remainingNames) */
+  /** Archetype pool for the current phase (subset of remainingNames) */
   phasePool: string[]
 
-  /** Dernier choix (pour undo) */
+  /** Last choice (for undo) */
   lastMatchResult?: {
     phase: 'phase1' | 'phase2' | 'phase3'
     match: string[]
     winner: string
     losers?: string[]
     loser?: string
-    /** Deltas Elo appliqués (pour undo exact) */
+    /** Elo deltas applied (for exact undo) */
     eloDelta?: { name: string; delta: number }[]
-    /** Snapshot pour restauration lors d'un undo de transition de phase */
+    /** Snapshot for restore on phase transition undo */
     prevGroups?: string[][] | null
     prevPhasePool?: string[]
     prevGroupsTotal?: number
@@ -86,18 +86,18 @@ export interface TournamentState {
 /** Elo initial */
 export const INITIAL_ELO = 1000
 
-/** Phase 1 : 2 rounds de couverture (groupes de 4, tout le pool) */
+/** Phase 1: 2 coverage rounds (groups of 4, full pool) */
 export const COVERAGE_ROUND_COUNT = 2
-/** Phase 2 : fraction du pool retenue (top 50%) */
+/** Phase 2: fraction of pool retained (top 50%) */
 export const REFINEMENT_POOL_FRACTION = 0.5
-/** Phase 3 : taille du pool suisse (24 finalistes) */
+/** Phase 3: Swiss pool size (24 finalists) */
 export const SWISS_POOL_SIZE = 24
-/** Phase 3 : nombre de rounds suisses */
+/** Phase 3: number of Swiss rounds */
 export const SWISS_ROUND_COUNT = 3
 
-/** K-factor pour groupes phase 1 (dampened : K=32 × 0.5) */
+/** K-factor for phase 1 groups (dampened: K=32 × 0.5) */
 export const K_GROUP_DAMPENED = 16
-/** K-factor pour groupes phase 2 (full) */
+/** K-factor for phase 2 groups (full) */
 export const K_GROUP_FULL = 32
-/** K-factor pour duels 1v1 phase 3 */
+/** K-factor for phase 3 1v1 duels */
 export const K_SWISS = 32

@@ -2,7 +2,7 @@ import type { YgoCard } from '~/types/api'
 import type { RepresentativeCard } from '~/types/tournament'
 import type { ExtraPolicy, ArchetypeProfile } from '~/types/ranking'
 
-/** Grille 5+5 : 5 monstres Main Deck + 5 monstres Extra Deck (artworks uniquement). */
+/** 5+5 grid: 5 Main Deck monsters + 5 Extra Deck monsters (artworks only). */
 export const MAIN_DISPLAY_COUNT = 5
 export const EXTRA_DISPLAY_COUNT = 5
 const TOTAL_DISPLAY_COUNT = MAIN_DISPLAY_COUNT + EXTRA_DISPLAY_COUNT
@@ -19,7 +19,7 @@ const RARITY_ORDER = [
   'Common'
 ] as const
 
-/** Ordre : Extra (2) → Main (2) → Spell (2) → Trap (2). */
+/** Order: Extra (2) → Main (2) → Spell (2) → Trap (2). */
 export const REPRESENTATIVE_EXTRA_COUNT = 2
 const REPRESENTATIVE_MAIN_COUNT = 2
 const REPRESENTATIVE_SPELL_COUNT = 2
@@ -44,7 +44,7 @@ function nameTokens (s: string): string[] {
   return normalize(s).split(/\s+/).filter(Boolean)
 }
 
-/** Nom de la carte = nom exact de l'archétype = carte « flagship » (très emblématique). */
+/** Card name = exact archetype name = "flagship" card (highly iconic). */
 function getArchetypeNameScore (cardName: string, archetypeName: string): number {
   const n = normalize(cardName)
   const a = normalize(archetypeName)
@@ -52,7 +52,7 @@ function getArchetypeNameScore (cardName: string, archetypeName: string): number
   if (n === a) return 300
   if (n.startsWith(a + ' ') || n.startsWith(a + '-')) return 220
   if (n.startsWith(a)) return 200
-  // Contient le nom de l'archétype quelque part (ex: "Number C39: Utopia Ray" → "Utopia")
+  // Contains the archetype name somewhere (e.g.: "Number C39: Utopia Ray" → "Utopia")
   if (n.includes(a)) return 160
   const cardToks = nameTokens(cardName)
   const archToks = nameTokens(archetypeName)
@@ -94,7 +94,7 @@ function getBestReleaseDate (card: YgoCard): Date | null {
   return new Date(Math.max(...parsed.map(d => d.getTime())))
 }
 
-/** Boss monsters d'Extra Deck sont souvent les plus iconiques (Stardust Dragon, etc.). */
+/** Extra Deck boss monsters are often the most iconic (Stardust Dragon, etc.). */
 function getTypeScore (card: YgoCard): number {
   const t = (card.type ?? '').toLowerCase()
   const f = (card.frameType ?? '').toLowerCase()
@@ -129,8 +129,8 @@ function getEffectBonus (card: YgoCard): number {
 }
 
 /**
- * Bonus ATK : les boss monsters (2500+) sont les cartes signatures des archétypes.
- * Scaling linéaire jusqu'à 4000 + bonus palier pour ATK >= 2500.
+ * ATK bonus: boss monsters (2500+) are the signature cards of archetypes.
+ * Linear scaling up to 4000 + tier bonus for ATK >= 2500.
  */
 function getAtkBonus (card: YgoCard): number {
   const atk = card.atk
@@ -142,7 +142,7 @@ function getAtkBonus (card: YgoCard): number {
 }
 
 /**
- * Bonus DEF : monstres en défense (haute DEF = cartes clés dans certains archétypes).
+ * DEF bonus: defensive monsters (high DEF = key cards in some archetypes).
  */
 function getDefBonus (card: YgoCard): number {
   const def = card.def
@@ -152,8 +152,8 @@ function getDefBonus (card: YgoCard): number {
 }
 
 /**
- * Bonus longueur du texte d'effet : cartes avec effet détaillé = souvent plus importantes.
- * Plafonné pour ne pas surpondérer les murs de texte.
+ * Effect text length bonus: cards with detailed effects = often more important.
+ * Capped to avoid overweighting walls of text.
  */
 function getEffectLengthScore (card: YgoCard): number {
   const len = (card.desc ?? '').length
@@ -163,9 +163,9 @@ function getEffectLengthScore (card: YgoCard): number {
 }
 
 /**
- * Score basé sur la popularité (nombre de printings).
- * Les cartes très rééditées sont des staples ou des icônes de l'archétype.
- * Échelle logarithmique pour différencier 2 printings vs 50 sans écraser tout.
+ * Score based on popularity (number of printings).
+ * Heavily reprinted cards are staples or archetype icons.
+ * Logarithmic scale to differentiate 2 printings vs 50 without flattening everything.
  */
 function getReprintScore (card: YgoCard): number {
   const sets = card.card_sets ?? []
@@ -184,10 +184,10 @@ function getReprintScore (card: YgoCard): number {
 }
 
 /**
- * Bonus pour les cartes dont l'effet mentionne le nom de l'archétype.
- * Indique que la carte supporte l'archétype, mais ne devrait pas dominer le score.
- * Plafonné à 3 mentions pour éviter qu'une carte avec un texte verbeux écrase
- * une carte véritablement iconique (ex: Salamangreat Coyote vs Circle).
+ * Bonus for cards whose effect mentions the archetype name.
+ * Indicates the card supports the archetype, but should not dominate the score.
+ * Capped at 3 mentions to prevent a card with verbose text from overshadowing
+ * a truly iconic card (e.g.: Salamangreat Coyote vs Circle).
  */
 function getDescriptionBonus (card: YgoCard, archetypeName: string): number {
   const desc = (card.desc ?? '').toLowerCase()
@@ -201,9 +201,9 @@ function getDescriptionBonus (card: YgoCard, archetypeName: string): number {
 }
 
 /**
- * Score basé sur l'âge de la carte (date de sortie la plus récente).
- * Les cartes récentes gagnent des points, les cartes très anciennes en perdent.
- * Cela pénalise les vieilles cartes obsolètes qui ne sont plus jouées.
+ * Score based on card age (most recent release date).
+ * Recent cards gain points, very old cards lose them.
+ * This penalizes old obsolete cards that are no longer played.
  */
 function getDateScore (card: YgoCard): number {
   const d = getBestReleaseDate(card)
@@ -220,7 +220,7 @@ function getDateScore (card: YgoCard): number {
   return -40
 }
 
-/** Carte dont le nom est exactement l'archétype = souvent la plus iconique. */
+/** Card whose name is exactly the archetype = often the most iconic. */
 function isExactArchetypeName (cardName: string, archetypeName: string): boolean {
   return normalize(cardName) === normalize(archetypeName)
 }
@@ -231,19 +231,71 @@ function enName (card: YgoCard): string {
 }
 
 /**
- * Vérifie si la carte appartient officiellement à l'archétype.
- * On ne garde que les cartes dont le champ `archetype` correspond exactement à l'archétype demandé,
- * pour éviter les cartes dans plusieurs archétypes (ex: Dragon-Electroqueu dans Watt) ou les faux positifs.
+ * Article prefixes to remove for the canonical form (naming variants of the same archetype).
+ * E.g. "The Agent" = "Agent", "A Legendary Ocean" = "Legendary Ocean".
+ */
+const ARCHETYPE_ARTICLE_PREFIXES = /^(the|a|an)\s+/
+
+/**
+ * Canonical form for archetype comparison: normalizes then removes the prefixes
+ * "the ", "a ", "an " so that variants with articles match (e.g. The Agent / Agent).
+ */
+function canonicalArchetype (archetypeName: string): string {
+  const n = normalize(archetypeName)
+  return n.replace(ARCHETYPE_ARTICLE_PREFIXES, '')
+}
+
+/**
+ * Checks if the card officially belongs to the archetype.
+ * - A segment must match the requested name after canonicalization (articles "The "/"A "/"An " removed).
+ * - Cards whose segment is a "more specific" archetype (strictly longer name
+ *   containing the requested name) are excluded: e.g. "Roid" vs "Speedroid"/"Vehicroid", "Eyes" vs "Blue-Eyes", etc.
  */
 function belongsToArchetype (card: YgoCard, archetypeName: string): boolean {
   const cardArch = (card.archetype ?? '').trim()
   const name = archetypeName.trim()
   if (!name) return false
   if (!cardArch) return false
-  return normalize(cardArch) === normalize(name)
+  const want = canonicalArchetype(name)
+  const segments = cardArch.split(',').map(s => normalize(s.trim())).filter(Boolean)
+  const canonicalSegments = segments.map(s => canonicalArchetype(s))
+  const hasExactMatch = canonicalSegments.some(cs => cs === want)
+  if (!hasExactMatch) return false
+  const hasStricterArchetype = canonicalSegments.some(
+    cs => cs.length > want.length && cs.includes(want)
+  )
+  if (hasStricterArchetype) return false
+  return true
 }
 
-/** True si la carte est Extra Deck (Fusion/Synchro/Xyz/Link). */
+/**
+ * True if the card has an official archetype "more specific" than the requested name
+ * (e.g. Speedroid, Vehicroid for Roid; Blue-Eyes for Eyes).
+ * Used to exclude these cards from the pool when loading a generic archetype.
+ */
+export function hasMoreSpecificArchetype (card: YgoCard, requestedArchetype: string): boolean {
+  const cardArch = (card.archetype ?? '').trim()
+  const name = requestedArchetype.trim()
+  if (!name || !cardArch) return false
+  const want = canonicalArchetype(name)
+  const segments = cardArch.split(',').map(s => normalize(s.trim())).filter(Boolean)
+  const canonicalSegments = segments.map(s => canonicalArchetype(s))
+  return canonicalSegments.some(
+    cs => cs.length > want.length && cs.includes(want)
+  )
+}
+
+/**
+ * Filters cards to keep only those that officially belong to the archetype
+ * (matching `archetype` field, not just similar name).
+ * Use after any API fetch to exclude false positives.
+ */
+export function filterCardsByArchetype (cards: YgoCard[], archetypeName: string): YgoCard[] {
+  if (!archetypeName.trim()) return []
+  return cards.filter(c => belongsToArchetype(c, archetypeName))
+}
+
+/** True if the card is Extra Deck (Fusion/Synchro/Xyz/Link). */
 function isExtraDeck (card: YgoCard): boolean {
   const t = (card.type ?? '').toLowerCase()
   const f = (card.frameType ?? '').toLowerCase()
@@ -253,8 +305,8 @@ function isExtraDeck (card: YgoCard): boolean {
 }
 
 /**
- * Score une carte pour déterminer les « meilleures » de l'archétype.
- * Critères : Extra Deck privilégié, nom archétype, rareté, ATK/DEF, rééditions, longueur d'effet, date.
+ * Scores a card to determine the "best" of the archetype.
+ * Criteria: Extra Deck prioritized, archetype name, rarity, ATK/DEF, reprints, effect length, date.
  */
 function scoreCard (card: YgoCard, archetypeName: string): number {
   const scoringName = enName(card)
@@ -307,14 +359,14 @@ function tieBreak (c1: YgoCard, c2: YgoCard, archetypeName: string): number {
   return (c2.def ?? 0) - (c1.def ?? 0)
 }
 
-/** Carte avec illustration compatible : pas Skill / Rush. Pendulum inclus. */
+/** Card with compatible artwork: no Skill / Rush. Pendulum included. */
 function hasSquareArt (card: YgoCard): boolean {
   const t = (card.type ?? '').toLowerCase()
   if (t.includes('skill')) return false
   return true
 }
 
-/** Exclut les cartes Token (non jouables dans le deck). */
+/** Excludes Token cards (not playable in the deck). */
 function isTokenCard (card: YgoCard): boolean {
   const t = (card.type ?? '').toLowerCase()
   const f = (card.frameType ?? '').toLowerCase()
@@ -323,20 +375,7 @@ function isTokenCard (card: YgoCard): boolean {
 
 type CardCategory = 'extra' | 'main' | 'spell' | 'trap'
 
-/** Index de la première carte de chaque catégorie (0=Extra, 1=Main, 2=Spell, 3=Trap). */
-const FIRST_CARD_INDEX_BY_CATEGORY: [number, number, number, number] = [
-  0,
-  EXTRA_COUNT,
-  EXTRA_COUNT + MAIN_COUNT,
-  EXTRA_COUNT + MAIN_COUNT + SPELL_COUNT
-]
-
-export function getFirstCardIndexForCategorySlot (slot: number): number {
-  if (slot < 0 || slot > 3) return 0
-  return FIRST_CARD_INDEX_BY_CATEGORY[slot] ?? 0
-}
-
-/** Classe une carte pour l’ordre boss : Extra → Main → Spell → Trap. */
+/** Classifies a card for boss ordering: Extra → Main → Spell → Trap. */
 export function getCardCategory (card: YgoCard): CardCategory {
   const t = (card.type ?? '').toLowerCase()
   const f = (card.frameType ?? '').toLowerCase()
@@ -359,28 +398,27 @@ export function getCardCategory (card: YgoCard): CardCategory {
 }
 
 /**
- * Sélection : toujours 10 cartes au total.
- * Extra en premier (jusqu’à 5), puis Main pour compléter (meilleures en tête).
- * Tri par pertinence : rareté, ATK/DEF, rééditions, longueur d’effet, nom.
+ * Selection: always 10 cards total.
+ * Extra first (up to 5), then Main to fill (best cards first).
+ * Sorted by relevance: rarity, ATK/DEF, reprints, effect length, name.
  */
 export function pick5Main5Extra (
   cards: YgoCard[],
   archetypeName: string
 ): { main: YgoCard[]; extra: YgoCard[] } {
   const pool = preparePool(cards, archetypeName)
-  const mainPool = pool.filter(c => getCardCategory(c) === 'main')
+  // Monsters only (no spells or traps)
   const extraPool = pool.filter(c => getCardCategory(c) === 'extra')
-  const sortedMain = sortByRelevance(mainPool, archetypeName)
+  const mainPool = pool.filter(c => getCardCategory(c) === 'main')
   const sortedExtra = sortByRelevance(extraPool, archetypeName)
-  const extraCount = Math.min(EXTRA_DISPLAY_COUNT, sortedExtra.length)
-  const mainCount = TOTAL_DISPLAY_COUNT - extraCount
-  return {
-    main: sortedMain.slice(0, Math.max(0, mainCount)),
-    extra: sortedExtra.slice(0, extraCount)
-  }
+  const sortedMain = sortByRelevance(mainPool, archetypeName)
+  const extra = sortedExtra.slice(0, EXTRA_DISPLAY_COUNT)
+  const mainNeeded = TOTAL_DISPLAY_COUNT - extra.length
+  const main = sortedMain.slice(0, Math.max(0, mainNeeded))
+  return { main, extra }
 }
 
-/** Tag Extra Deck pour l'archétype (affichage et matchmaking). */
+/** Extra Deck tag for the archetype (display and matchmaking). */
 export function getExtraPolicy (extraCards: YgoCard[]): ExtraPolicy {
   if (!extraCards.length) return 'none'
   const types = new Set<string>()
@@ -397,7 +435,7 @@ export function getExtraPolicy (extraCards: YgoCard[]): ExtraPolicy {
   return types.has('fusion') ? 'fusion' : types.has('synchro') ? 'synchro' : types.has('xyz') ? 'xyz' : 'link'
 }
 
-/** Construit le profil esthétique (race, attribute, nameTokens). Pas d'ATK/DEF, date, popularité. */
+/** Builds the aesthetic profile (race, attribute, nameTokens). No ATK/DEF, date, or popularity. */
 export function buildArchetypeProfile (
   cards: YgoCard[],
   archetypeName: string,
@@ -424,7 +462,7 @@ export function buildArchetypeProfile (
   }
 }
 
-/** Tri par puissance / pertinence dans une catégorie (boss first). */
+/** Sort by power / relevance within a category (boss first). */
 function sortByRelevance (arr: YgoCard[], archetypeName: string): YgoCard[] {
   return [...arr].sort((x, y) => {
     const sx = scoreCard(x, archetypeName)
@@ -435,8 +473,8 @@ function sortByRelevance (arr: YgoCard[], archetypeName: string): YgoCard[] {
 }
 
 /**
- * Prépare le pool filtré pour un archétype (archetype officiel exact, square art, no tokens).
- * On n’utilise que les cartes dont card.archetype correspond exactement (pas de fallback).
+ * Prepares the filtered pool for an archetype (exact official archetype, square art, no tokens).
+ * Only cards whose card.archetype matches exactly are used (no fallback).
  */
 function preparePool (cards: YgoCard[], archetypeName: string): YgoCard[] {
   if (!cards.length) return []
@@ -449,19 +487,20 @@ function preparePool (cards: YgoCard[], archetypeName: string): YgoCard[] {
 }
 
 /**
- * Vérifie qu'un archétype peut fournir 10 cartes (Extra + Main).
- * Il faut au moins (10 - min(5, nb Extra)) monstres Main pour compléter.
+ * Checks that an archetype has enough displayable MONSTERS (> 5, i.e. ≥ 6 Main + Extra monsters).
+ * Archetypes with 5 or fewer monsters are excluded from the tournament because they are not
+ * representative enough of a truly playable theme.
  */
 export function hasValidRepresentatives (cards: YgoCard[], archetypeName: string): boolean {
   const pool = preparePool(cards, archetypeName)
-  const main = pool.filter(c => getCardCategory(c) === 'main')
-  const extra = pool.filter(c => getCardCategory(c) === 'extra')
-  const extraCount = Math.min(EXTRA_DISPLAY_COUNT, extra.length)
-  const mainNeeded = TOTAL_DISPLAY_COUNT - extraCount
-  return main.length >= mainNeeded
+  const monsters = pool.filter(c => {
+    const cat = getCardCategory(c)
+    return cat === 'main' || cat === 'extra'
+  })
+  return monsters.length >= 6
 }
 
-/** Libellé du type de carte pour l’affichage sous le nom (selon la carte affichée). */
+/** Card type label for display below the name (based on the displayed card). */
 export function getCardDisplayType (card: YgoCard): string {
   const t = (card.type ?? '').toLowerCase()
   const f = (card.frameType ?? '').toLowerCase()
@@ -478,8 +517,8 @@ export function getCardDisplayType (card: YgoCard): string {
 }
 
 /**
- * Retourne 10 cartes pour affichage : Extra Deck en premier (0–4), puis Main (5–9).
- * Ordre dans chaque groupe : meilleure à la moins bonne (rareté, ATK/DEF, rééditions, effet, nom).
+ * Returns 10 cards for display: Extra Deck first (0–4), then Main (5–9).
+ * Order within each group: best to worst (rarity, ATK/DEF, reprints, effect, name).
  */
 export function pickRepresentativeCards (cards: YgoCard[], archetypeName: string): RepresentativeCard[] {
   const { main, extra } = pick5Main5Extra(cards, archetypeName)
@@ -493,25 +532,16 @@ export function pickRepresentativeCards (cards: YgoCard[], archetypeName: string
   return result
 }
 
-/** Une seule carte représentative : meilleure Extra si présente, sinon meilleure Main. */
-export function pickRepresentativeCard (
-  cards: YgoCard[],
-  archetypeName: string
-): YgoCard | null {
-  const { main, extra } = pick5Main5Extra(cards, archetypeName)
-  return extra[0] ?? main[0] ?? null
-}
-
 export const CARD_BACK_IMAGE_URL = '/card-back.png'
 
-/** URL artwork cropped depuis le CDN YGOPRODeck (cards_cropped). */
+/** Cropped artwork URL from the YGOPRODeck CDN (cards_cropped). */
 const CARDS_CROPPED_BASE = 'https://images.ygoprodeck.com/images/cards_cropped/'
 
 export function getCardImageUrl (card: YgoCard): string {
   return `${CARDS_CROPPED_BASE}${card.id}.jpg`
 }
 
-/** URL de l'image complète de la carte (design officiel, toute la carte). */
+/** Full card image URL (official design, entire card). */
 export function getFullCardImageUrl (card: YgoCard): string {
   const img = card.card_images?.[0]
   if (img?.image_url) return img.image_url

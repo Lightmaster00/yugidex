@@ -2,9 +2,9 @@ import { ref, watch, onUnmounted, toValue, type MaybeRefOrGetter } from 'vue'
 import { getCachedImageUrl } from '~/utils/imageCache'
 
 /**
- * Utilise le cache IndexedDB pour afficher l'image d'une carte.
- * Télécharge une seule fois depuis YGOPRODeck puis sert depuis le cache.
- * Révoque l'object URL au démontage pour éviter les fuites mémoire.
+ * Uses IndexedDB cache to display a card image.
+ * Downloads once from YGOPRODeck then serves from cache.
+ * Revokes object URL on unmount to avoid memory leaks.
  */
 export function useCachedCardImage (
   cardId: MaybeRefOrGetter<number | undefined>,

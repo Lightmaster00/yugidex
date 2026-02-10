@@ -1,4 +1,4 @@
-/** Un set dans card_sets (pour rareté et date) */
+/** A set in card_sets (for rarity and date) */
 export interface CardSetEntry {
   set_name?: string
   set_rarity?: string
@@ -6,7 +6,7 @@ export interface CardSetEntry {
   set_price?: string
 }
 
-/** Une image dans card_images */
+/** An image in card_images */
 export interface CardImage {
   id: number
   image_url: string
@@ -14,7 +14,7 @@ export interface CardImage {
   image_url_cropped?: string
 }
 
-/** Carte retournée par cardinfo.php */
+/** Card returned by cardinfo.php */
 export interface YgoCard {
   id: number
   name: string

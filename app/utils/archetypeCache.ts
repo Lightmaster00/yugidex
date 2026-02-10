@@ -1,14 +1,14 @@
 /**
- * Cache IndexedDB pour la liste des archétypes valides (avec assez de représentants).
- * Rafraîchi une fois par mois pour accélérer le premier chargement.
+ * IndexedDB cache for the list of valid archetypes (with enough representatives).
+ * Refreshed once per month to speed up initial load.
  */
 
 const DB_NAME = 'yugidex-archetype-cache'
 const STORE_NAME = 'archetypes'
 const DB_VERSION = 2
 const CACHE_KEY = 'valid-names'
-const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000 // 30 jours
-const ALGORITHM_VERSION = 10
+const MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000 // 60 days (2 months)
+const ALGORITHM_VERSION = 22
 
 function isClient (): boolean {
   return typeof indexedDB !== 'undefined'
@@ -32,12 +32,25 @@ function openDb (): Promise<IDBDatabase> {
 export interface ArchetypeCacheEntry {
   id: string
   validNames: string[]
+  /** Inseparable archetypes: primary -> [partners] (e.g. Fluffal -> [Edge Imp]). */
+  partnerMap?: Record<string, string[]>
+  /** Pre-computed representative card IDs from the pipeline. */
+  representativeMap?: Record<string, number[]>
+  /** Card IDs (members+supports) per entity — for filtering API intruders. */
+  entityCardMap?: Record<string, number[]>
   fetchedAt: number
   algorithmVersion?: number
   language?: string
 }
 
-export async function getCachedValidArchetypes (lang?: string): Promise<string[] | null> {
+export interface CachedArchetypesResult {
+  validNames: string[]
+  partnerMap: Record<string, string[]>
+  representativeMap: Record<string, number[]>
+  entityCardMap: Record<string, number[]>
+}
+
+export async function getCachedValidArchetypes (lang?: string): Promise<CachedArchetypesResult | null> {
   if (!isClient()) return null
   try {
     const db = await openDb()
@@ -60,7 +73,16 @@ export async function getCachedValidArchetypes (lang?: string): Promise<string[]
           return
         }
         const age = Date.now() - entry.fetchedAt
-        resolve(age <= MAX_AGE_MS ? entry.validNames : null)
+        if (age > MAX_AGE_MS) {
+          resolve(null)
+          return
+        }
+        resolve({
+          validNames: entry.validNames,
+          partnerMap: entry.partnerMap ?? {},
+          representativeMap: entry.representativeMap ?? {},
+          entityCardMap: entry.entityCardMap ?? {},
+        })
       }
       req.onerror = () => {
         tx.oncomplete = () => db.close()
@@ -72,7 +94,13 @@ export async function getCachedValidArchetypes (lang?: string): Promise<string[]
   }
 }
 
-export async function setCachedValidArchetypes (validNames: string[], lang?: string): Promise<void> {
+export async function setCachedValidArchetypes (
+  validNames: string[],
+  lang?: string,
+  partnerMap?: Record<string, string[]>,
+  representativeMap?: Record<string, number[]>,
+  entityCardMap?: Record<string, number[]>
+): Promise<void> {
   if (!isClient() || !validNames.length) return
   try {
     const db = await openDb()
@@ -81,6 +109,9 @@ export async function setCachedValidArchetypes (validNames: string[], lang?: str
       tx.objectStore(STORE_NAME).put({
         id: CACHE_KEY,
         validNames,
+        partnerMap: partnerMap ?? {},
+        representativeMap: representativeMap ?? {},
+        entityCardMap: entityCardMap ?? {},
         fetchedAt: Date.now(),
         algorithmVersion: ALGORITHM_VERSION,
         language: lang ?? 'en'

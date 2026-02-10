@@ -1,14 +1,14 @@
 import type { TournamentState, ArchetypeState } from '~/types/tournament'
 import { seededShuffle } from '~/utils/state'
 
-/** Clé normalisée pour une paire (ordre alphabétique). */
+/** Normalized key for a pair (alphabetical order). */
 export function matchKey (a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`
 }
 
 /**
- * Sépare le pool en tiers par nombre de cartes représentatives (12, 9, 6…).
- * Retourne les tiers triés par nombre décroissant de cartes.
+ * Splits the pool into tiers by number of representative cards (12, 9, 6…).
+ * Returns the tiers sorted by descending card count.
  */
 function splitByCardCount (
   pool: string[],
@@ -20,16 +20,16 @@ function splitByCardCount (
     if (!byCount.has(count)) byCount.set(count, [])
     byCount.get(count)!.push(name)
   }
-  // Trier par nombre décroissant de cartes (12 d'abord, puis 9, puis 6…)
+  // Sort by descending card count (12 first, then 9, then 6…)
   return [...byCount.entries()]
     .sort((a, b) => b[0] - a[0])
     .map(([, names]) => names)
 }
 
 /**
- * Clé thématique pour regrouper les archétypes similaires.
- * Combine attribut dominant + race dominante (ex: "DARK|Dragon", "WIND|Winged Beast").
- * Les archétypes sans metadata (Round 1, pas encore chargés) vont dans un cluster commun.
+ * Thematic key for grouping similar archetypes.
+ * Combines dominant attribute + dominant race (e.g. "DARK|Dragon", "WIND|Winged Beast").
+ * Archetypes without metadata (Round 1, not yet loaded) go into a common cluster.
  */
 function thematicKey (name: string, archetypes: Record<string, ArchetypeState>): string {
   const entry = archetypes[name]
@@ -40,9 +40,9 @@ function thematicKey (name: string, archetypes: Record<string, ArchetypeState>):
 }
 
 /**
- * Regroupe les archétypes par thème (attribut+race) puis les intercale
- * pour que les groupes de 4 contiennent des archétypes thématiquement proches.
- * Au sein de chaque cluster thématique, l'ordre est celui donné en entrée.
+ * Groups archetypes by theme (attribute+race) then interleaves them
+ * so that groups of 4 contain thematically close archetypes.
+ * Within each thematic cluster, the order is as given in input.
  */
 function clusterByTheme (
   names: string[],
@@ -54,47 +54,66 @@ function clusterByTheme (
     if (!clusters.has(key)) clusters.set(key, [])
     clusters.get(key)!.push(name)
   }
-  // Trier les clusters par taille décroissante (les plus gros thèmes d'abord)
+  // Sort clusters by descending size (largest themes first)
   const sorted = [...clusters.entries()].sort((a, b) => b[1].length - a[1].length)
-  // Concaténer : les archétypes d'un même thème se retrouvent consécutifs
-  // → quand on chunk par groupes de 4, ils seront ensemble
+  // Concatenate: archetypes of the same theme end up consecutive
+  // → when chunking into groups of 4, they will be together
   return sorted.flatMap(([, arr]) => arr)
 }
 
 /**
- * Chunk un sous-pool en groupes, en fusionnant le dernier groupe s'il n'a qu'un élément.
+ * Chunks a sub-pool into groups of size ≤ groupSize and ≥ 2.
+ * If the last group is too small (1 element), we borrow from the previous
+ * so both have at least 2 elements, never exceeding groupSize.
  */
 function chunkGroups (items: string[], groupSize: number): string[][] {
+  if (items.length === 0) return []
+  if (items.length <= groupSize) return [items]
   const groups: string[][] = []
   for (let i = 0; i < items.length; i += groupSize) {
     groups.push(items.slice(i, i + groupSize))
   }
+  // If the last group has only one element, rebalance with the second-to-last
   if (groups.length > 1 && groups[groups.length - 1]!.length === 1) {
-    const last = groups.pop()!
-    groups[groups.length - 1]!.push(...last)
+    const last = groups[groups.length - 1]!
+    const prev = groups[groups.length - 2]!
+    // Borrow one element from the second-to-last to give to the last
+    const borrowed = prev.pop()!
+    last.unshift(borrowed)
   }
   return groups
 }
 
 /**
- * Fusionne les groupes trop petits (1 élément) à la fin avec le groupe précédent.
- * Gère les restes de tiers qui ne forment pas un groupe complet.
+ * Merges tail groups that are too small (1 element): borrows one element
+ * from the previous group instead of merging (avoids groups > groupSize).
  */
 function mergeSmallTailGroups (groups: string[][]): string[][] {
   if (groups.length <= 1) return groups
-  const out = [...groups]
+  const out = [...groups.map(g => [...g])]
   while (out.length > 1 && out[out.length - 1]!.length === 1) {
-    const last = out.pop()!
-    out[out.length - 1]!.push(...last)
+    const last = out[out.length - 1]!
+    const prev = out[out.length - 2]!
+    if (prev.length >= 3) {
+      // Borrow one element to rebalance: [4,1] → [3,2]
+      const borrowed = prev.pop()!
+      last.unshift(borrowed)
+    } else {
+      // prev too small to borrow, merge (remains ≤ 3)
+      out.pop()
+      prev.push(...last)
+    }
+    // If the last group now has ≥ 2, stop
+    if (out[out.length - 1]!.length >= 2) break
   }
   return out
 }
 
 /**
- * Construit des groupes de `groupSize` par mélange aléatoire (coverage).
- * Tri : card count tier → thème (attribut+race) → shuffle intra-cluster.
- * Les archétypes thématiquement proches (ex: WIND/Winged Beast) se retrouvent ensemble.
- * Le dernier groupe de chaque tier peut être plus petit (2 ou 3).
+ * Builds groups of `groupSize` by random shuffle (coverage).
+ * Sort: card count tier → theme (attribute+race) → intra-cluster shuffle.
+ * Thematically close archetypes (e.g. WIND/Winged Beast) end up together.
+ * The last group of each tier may be smaller (2 or 3).
  */
 export function buildCoverageGroups (
   pool: string[],
@@ -106,7 +125,7 @@ export function buildCoverageGroups (
   const tiers = splitByCardCount(pool, archetypes)
   const allGroups: string[][] = []
   for (let t = 0; t < tiers.length; t++) {
-    // Regrouper par thème, puis mélanger au sein de chaque cluster
+    // Group by theme, then shuffle within each cluster
     const themed = clusterByTheme(tiers[t]!, archetypes)
     const shuffled = themedShuffle(themed, archetypes, seed + t * 777)
     allGroups.push(...chunkGroups(shuffled, groupSize))
@@ -115,15 +134,15 @@ export function buildCoverageGroups (
 }
 
 /**
- * Mélange qui préserve la proximité thématique : mélange au sein de chaque cluster
- * thématique, puis concatène les clusters (dans un ordre aléatoire pour varier).
+ * Shuffle that preserves thematic proximity: shuffles within each thematic
+ * cluster, then concatenates clusters (in random order for variety).
  */
 function themedShuffle (
   themed: string[],
   archetypes: Record<string, ArchetypeState>,
   seed: number
 ): string[] {
-  // Re-séparer par cluster pour shuffler chaque cluster indépendamment
+  // Re-split by cluster to shuffle each cluster independently
   const clusters = new Map<string, string[]>()
   for (const name of themed) {
     const key = thematicKey(name, archetypes)
@@ -139,9 +158,9 @@ function themedShuffle (
 }
 
 /**
- * Construit des groupes par proximité Elo (refinement).
- * D'abord séparé par card count tier, puis par thème (attribut+race),
- * puis dans chaque sous-groupe : tri par Elo desc → découpage en blocs → mélange intra-bloc.
+ * Builds groups by Elo proximity (refinement).
+ * First separated by card count tier, then by theme (attribute+race),
+ * then within each subgroup: sort by Elo desc → split into blocks → intra-block shuffle.
  */
 export function buildEloProximityGroups (
   pool: string[],
@@ -153,14 +172,14 @@ export function buildEloProximityGroups (
   const tiers = splitByCardCount(pool, archetypes)
   const allGroups: string[][] = []
   for (let t = 0; t < tiers.length; t++) {
-    // Sous-grouper par thème au sein de chaque tier
+    // Sub-group by theme within each tier
     const themeClusters = new Map<string, string[]>()
     for (const name of tiers[t]!) {
       const key = thematicKey(name, archetypes)
       if (!themeClusters.has(key)) themeClusters.set(key, [])
       themeClusters.get(key)!.push(name)
     }
-    // Trier chaque cluster par Elo, puis chunk
+    // Sort each cluster by Elo, then chunk
     for (const [, cluster] of themeClusters) {
       const sorted = [...cluster].sort((a, b) => {
         const eloA = archetypes[a]?.elo ?? 1000
@@ -177,10 +196,10 @@ export function buildEloProximityGroups (
 }
 
 /**
- * Pairing Suisse : pool trié par nombre de cartes desc, puis score, puis Elo.
- * Paires voisines, évite les re-matches.
- * Préfère : même card count → même thème → même score → relâche progressivement.
- * Retourne [nameA, nameB] ou null si aucune paire disponible.
+ * Swiss pairing: pool sorted by card count desc, then score, then Elo.
+ * Adjacent pairs, avoids rematches.
+ * Prefers: same card count → same theme → same score → progressively relaxes.
+ * Returns [nameA, nameB] or null if no pair available.
  */
 export function getNextMatchSwiss (
   state: TournamentState,
@@ -192,18 +211,18 @@ export function getNextMatchSwiss (
   const sorted = [...pool].sort((a, b) => {
     const entryA = state.archetypes[a]
     const entryB = state.archetypes[b]
-    // D'abord par nombre de cartes représentatives (desc)
+    // First by number of representative cards (desc)
     const cardsA = entryA?.representativeCards?.length ?? 0
     const cardsB = entryB?.representativeCards?.length ?? 0
     if (cardsB !== cardsA) return cardsB - cardsA
-    // Puis par score (wins - losses)
+    // Then by score (wins - losses)
     const scoreA = (entryA?.wins ?? 0) - (entryA?.losses ?? 0)
     const scoreB = (entryB?.wins ?? 0) - (entryB?.losses ?? 0)
     if (scoreB !== scoreA) return scoreB - scoreA
     return (entryB?.elo ?? 1000) - (entryA?.elo ?? 1000)
   })
 
-  // Tolérances croissantes : même cartes + même thème → même cartes → tout
+  // Increasing tolerances: same cards + same theme → same cards → all
   const passes: { sameCards: boolean; sameTheme: boolean }[] = [
     { sameCards: true, sameTheme: true },
     { sameCards: true, sameTheme: false },

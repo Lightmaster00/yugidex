@@ -1,6 +1,6 @@
 import type { TournamentState } from '~/types/tournament'
 
-/** Top 10 par Elo décroissant parmi les archétypes ayant joué au moins 1 match. */
+/** Top 10 by descending Elo among archetypes that played at least 1 match. */
 export function getTop10 (state: TournamentState): Array<{
   rank: number
   name: string
@@ -9,8 +9,8 @@ export function getTop10 (state: TournamentState): Array<{
   losses: number
   matchesPlayed: number
 }> {
-  // En phase 3 / finished avec un pool finalisé, utiliser le pool de la phase
-  // Sinon, utiliser tous les archétypes (phase 1/2 ou finish anticipé)
+  // In phase 3 / finished with a finalized pool, use the phase pool
+  // Otherwise use all archetypes (phase 1/2 or early finish)
   const names =
     (state.phase === 'phase3' || state.phase === 'finished') && state.phasePool?.length
       ? state.phasePool
@@ -40,7 +40,7 @@ function escapeCsv (s: string): string {
   return s
 }
 
-/** Génère le CSV UTF-8 du Top 10. */
+/** Generates UTF-8 CSV of the Top 10. */
 export function exportTop10Csv (state: TournamentState): string {
   const top = getTop10(state)
   const rows = [CSV_HEADERS, ...top.map(
@@ -50,7 +50,7 @@ export function exportTop10Csv (state: TournamentState): string {
   return '\uFEFF' + rows.join('\r\n')
 }
 
-/** Déclenche le téléchargement du fichier CSV. */
+/** Triggers download of the CSV file. */
 export function downloadTop10Csv (state: TournamentState): void {
   if (typeof document === 'undefined') return
   const csv = exportTop10Csv(state)

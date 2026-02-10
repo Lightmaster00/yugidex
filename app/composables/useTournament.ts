@@ -1,5 +1,5 @@
 import type { TournamentState, RepresentativeCard } from '~/types/tournament'
-import { loadRepresentativesForArchetype } from '~/composables/useYgoApi'
+import { loadRepresentativesForArchetype, fetchAndAnalyzeArchetypes } from '~/composables/useYgoApi'
 import { getNextMatchSwiss } from '~/utils/matchmaking'
 import {
   createInitialState as createInitialStateImpl,
@@ -12,11 +12,10 @@ import {
   loadState,
   clearState
 } from '~/utils/state'
-import { downloadTop10Csv, getTop10, exportTop10Csv } from '~/utils/csv'
-import { fetchArchetypes, filterArchetypesWithEnoughRepresentatives } from '~/composables/useYgoApi'
+import { downloadTop10Csv, getTop10 } from '~/utils/csv'
 
 export function useTournament () {
-  /** Retire un archétype du state (sans images = on le supprime). */
+  /** Removes an archetype from state (no images = we delete it). */
   function removeArchetypeFromState (
     state: TournamentState,
     archetypeName: string
@@ -26,7 +25,7 @@ export function useTournament () {
     next.remainingNames = state.remainingNames.filter(n => n !== archetypeName)
     next.phasePool = state.phasePool.filter(n => n !== archetypeName)
     if (state.currentMatch?.includes(archetypeName)) next.currentMatch = null
-    // Retirer des groupes pré-calculés
+    // Remove from pre-computed groups
     if (next.currentRoundGroups) {
       next.currentRoundGroups = next.currentRoundGroups
         .map(g => g.filter(n => n !== archetypeName))
@@ -36,7 +35,7 @@ export function useTournament () {
     return next
   }
 
-  /** Applique le résultat d'un chargement représentatif à l'état (une archétype). */
+  /** Applies the result of a representative load to state (one archetype). */
   function applyRepresentativeResult (
     state: TournamentState,
     archetypeName: string,
@@ -65,7 +64,7 @@ export function useTournament () {
     return next
   }
 
-  /** Charge les cartes représentatives (5+5) si pas encore en cache. Si pas d'images, supprime l'archétype. */
+  /** Loads representative cards (5+5) if not yet cached. If no images, removes the archetype. */
   async function ensureRepresentative (
     state: TournamentState,
     archetypeName: string
@@ -76,7 +75,7 @@ export function useTournament () {
     return applyRepresentativeResult(state, archetypeName, res)
   }
 
-  /** Passe à l'image suivante parmi les 10 représentatives (5 Main + 5 Extra). */
+  /** Moves to the next image among the 10 representatives (5 Main + 5 Extra). */
   function cycleRepresentative (
     state: TournamentState,
     archetypeName: string
@@ -98,7 +97,7 @@ export function useTournament () {
     return next
   }
 
-  /** Assure les images pour une liste d'archétypes (chargement en parallèle). */
+  /** Ensures images for a list of archetypes (parallel load). */
   async function ensureRepresentatives (
     state: TournamentState,
     names: string[]
@@ -119,8 +118,7 @@ export function useTournament () {
   }
 
   return {
-    fetchArchetypes,
-    filterArchetypesWithEnoughRepresentatives,
+    fetchAndAnalyzeArchetypes,
     createInitialState: (names: string[], seed?: number) =>
       createInitialStateImpl(names, seed ?? Math.floor(Math.random() * 1e6)),
     getNextMatchSwiss,
@@ -136,7 +134,6 @@ export function useTournament () {
     cycleRepresentative,
     advanceToNextPhaseRound,
     getTop10,
-    exportTop10Csv,
     downloadTop10Csv
   }
 }

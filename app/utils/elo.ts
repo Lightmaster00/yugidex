@@ -1,9 +1,9 @@
-/** Espérance de victoire de A contre B. */
+/** Expected win probability of A vs B. */
 export function expectedScore (eloA: number, eloB: number): number {
   return 1 / (1 + Math.pow(10, (eloB - eloA) / 400))
 }
 
-/** Met à jour les Elo après un duel 1v1 : winner bat loser. */
+/** Updates Elo after a 1v1 duel: winner beats loser. */
 export function applyElo (winnerElo: number, loserElo: number, K: number = 32): { newWinner: number, newLoser: number } {
   const eWinner = expectedScore(winnerElo, loserElo)
   const eLoser = expectedScore(loserElo, winnerElo)
@@ -12,7 +12,7 @@ export function applyElo (winnerElo: number, loserElo: number, K: number = 32): 
   return { newWinner: Math.round(newWinner), newLoser: Math.round(newLoser) }
 }
 
-/** Met à jour les Elo après un duel groupe (1 gagnant, N perdants). */
+/** Updates Elo after a group duel (1 winner, N losers). */
 export function applyGroupElo (
   winnerElo: number,
   loserElos: number[],

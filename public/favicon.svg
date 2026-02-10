@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Diamond (card-game style), clean at 16×16 -->
+  <path fill="#1a1a2e" d="M16 2l14 14-14 14L2 16 16 2z"/>
+  <path fill="none" stroke="#c9a227" stroke-width="2" stroke-linejoin="miter" d="M16 6l10 10-10 10-10-10 10-10z"/>
+</svg>

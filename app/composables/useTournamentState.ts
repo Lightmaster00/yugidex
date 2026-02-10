@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import type { TournamentState } from '~/types/tournament'
 import { useTournament } from '~/composables/useTournament'
-import { useCardLanguage, ARCHETYPE_BLOCKLIST } from '~/composables/useYgoApi'
+import { useCardLanguage, capitalizeArchetypeName, setPartnerMapFromCache, setRepresentativeMapFromCache, setEntityCardIdsFromCache } from '~/composables/useYgoApi'
 import { getCachedValidArchetypes, setCachedValidArchetypes } from '~/utils/archetypeCache'
 import { getOrCreateUserId, saveVote } from '~/utils/rankingStorage'
 
@@ -11,8 +11,7 @@ export function useTournamentState () {
   const transitioning = ref(false)
   const error = ref<string | null>(null)
   const {
-    fetchArchetypes,
-    filterArchetypesWithEnoughRepresentatives,
+    fetchAndAnalyzeArchetypes,
     createInitialState,
     getNextMatchSwiss,
     applyGroupResult,
@@ -35,60 +34,44 @@ export function useTournamentState () {
   )
 
   const { language: currentLang } = useCardLanguage()
-  const LOAD_TIMEOUT_MS = 120_000
   const MAX_SKIP_RETRIES = 50
 
   async function loadFromApi () {
     error.value = null
-    let validNames: string[] | null = null
     const lang = currentLang.value
 
-    validNames = await getCachedValidArchetypes(lang)
-    if (validNames && validNames.length >= 4) {
-      // Appliquer la blocklist aux noms cachés (la blocklist peut avoir changé depuis le cache)
-      validNames = validNames.filter(n => !ARCHETYPE_BLOCKLIST.has(n))
-      if (validNames.length >= 4) {
-        const seed = Math.floor(Math.random() * 1e6)
-        state.value = createInitialState(validNames, seed)
-        await setNextMatch()
-        persistState(state.value!)
-        return
-      }
+    // ── Check cache first ──
+    const cached = await getCachedValidArchetypes(lang)
+    if (cached && cached.validNames.length >= 4) {
+      setPartnerMapFromCache(cached.partnerMap)
+      setRepresentativeMapFromCache(cached.representativeMap)
+      setEntityCardIdsFromCache(cached.entityCardMap)
+      const seed = Math.floor(Math.random() * 1e6)
+      state.value = createInitialState(cached.validNames.map(capitalizeArchetypeName), seed)
+      await setNextMatch()
+      persistState(state.value!)
+      return
     }
 
-    let names: string[] = []
+    // ── Run the Archetype Intelligence pipeline ──
+    let result: Awaited<ReturnType<typeof fetchAndAnalyzeArchetypes>>
     try {
-      names = (await fetchArchetypes()).filter(n => !ARCHETYPE_BLOCKLIST.has(n))
-    } catch (e) {
-      error.value = 'Impossible de charger les archétypes. Vérifiez votre connexion.'
+      result = await fetchAndAnalyzeArchetypes()
+    } catch {
+      error.value = 'Unable to load archetypes. Check your connection.'
       return
     }
-    if (names.length < 4) {
-      error.value = 'Not enough archetypes found.'
+    if (result.validNames.length < 4) {
+      error.value = 'Not enough archetypes detected (need at least 4).'
       return
     }
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('timeout')), LOAD_TIMEOUT_MS)
-    })
-    try {
-      validNames = await Promise.race([
-        filterArchetypesWithEnoughRepresentatives(names),
-        timeoutPromise
-      ])
-    } catch (e) {
-      const msg = (e as Error)?.message === 'timeout'
-        ? 'Le chargement prend trop de temps. Réessayez (connexion lente ou API occupée).'
-        : 'Erreur lors du chargement des archétypes. Réessayez.'
-      error.value = msg
-      return
-    }
-    if (validNames.length < 4) {
-      error.value = 'Not enough archetypes with valid images (need at least 5 representative cards per archetype).'
-      return
-    }
-    await setCachedValidArchetypes(validNames, lang)
+
+    // ── Cache result ──
+    await setCachedValidArchetypes(result.validNames, lang, result.partnerMap, result.representativeMap, result.entityCardMap)
+
+    // ── Create tournament ──
     const seed = Math.floor(Math.random() * 1e6)
-    state.value = createInitialState(validNames, seed)
+    state.value = createInitialState(result.validNames.map(capitalizeArchetypeName), seed)
     await setNextMatch()
     persistState(state.value!)
   }
@@ -98,20 +81,20 @@ export function useTournamentState () {
       const s = state.value
       if (!s) return
 
-      // Phase 1 / Phase 2 : groupes pré-calculés
+      // Phase 1 / Phase 2: pre-computed groups
       if (s.phase === 'phase1' || s.phase === 'phase2') {
         const groups = s.currentRoundGroups
         if (!groups || s.groupsCompleted >= groups.length) {
-          // Tous les groupes du round sont terminés (ou skippés) → avancer la phase/round
+          // All groups in the round are finished (or skipped) → advance phase/round
           state.value = advanceToNextPhaseRound(s)
           persistState(state.value)
           continue
         }
         const nextGroup = groups[s.groupsCompleted]!
-        // Filtrer les archétypes encore présents dans le state
+        // Filter archetypes still present in the state
         const validGroup = nextGroup.filter(n => s.archetypes[n] != null)
         if (validGroup.length < 2) {
-          // Groupe invalide → sauter
+          // Invalid group → skip
           state.value = { ...s, groupsCompleted: s.groupsCompleted + 1 }
           continue
         }
@@ -121,7 +104,7 @@ export function useTournamentState () {
           persistState(state.value)
           return
         }
-        // ensureRepresentatives a retiré des archétypes → sauter ce groupe
+        // ensureRepresentatives removed archetypes → skip this group
         state.value = { ...(state.value ?? s), groupsCompleted: s.groupsCompleted + 1 }
         continue
       }
@@ -174,7 +157,7 @@ export function useTournamentState () {
     }
   }
 
-  /** Phase 1 & 2 : l'utilisateur choisit un gagnant dans un groupe de 4 (ou 2-3). */
+  /** Phase 1 & 2: user chooses a winner in a group of 4 (or 2-3). */
   async function pickGroup (winner: string, losers: string[]) {
     if (!state.value || losers.length < 1) return
     getOrCreateUserId()
@@ -245,14 +228,14 @@ export function useTournamentState () {
     error.value = null
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(
-        () => reject(new Error('Le chargement a pris trop de temps. Réessayez (connexion lente ou API occupée).')),
+        () => reject(new Error('Loading took too long. Try again (slow connection or busy API).')),
         START_TIMEOUT_MS
       )
     })
     try {
       await Promise.race([loadFromApi(), timeoutPromise])
     } catch (e) {
-      error.value = (e as Error)?.message ?? 'Une erreur est survenue. Réessayez.'
+      error.value = (e as Error)?.message ?? 'An error occurred. Please try again.'
     } finally {
       loading.value = false
     }
@@ -265,7 +248,7 @@ export function useTournamentState () {
     startTournament()
   }
 
-  /** Remet la sélection à zéro : efface le tournoi et affiche l'écran de démarrage. */
+  /** Resets selection: clears the tournament and shows the start screen. */
   function resetToStart () {
     clearPersisted()
     state.value = null

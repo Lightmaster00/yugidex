@@ -7,7 +7,13 @@ export default defineNuxtConfig({
   ssr: false,
   app: {
     // Pour GitHub Pages : https://<user>.github.io/yugidex/
-    baseURL: process.env.NUXT_APP_BASE_URL || '/'
+    baseURL: process.env.NUXT_APP_BASE_URL || '/',
+    head: {
+      title: 'ArcheDuel',
+      link: [
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }
+      ]
+    }
   },
   // Évite les 404 sur _payload.json quand baseURL != '/' (GitHub Pages sous /repo/)
   experimental: {

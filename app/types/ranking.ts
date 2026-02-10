@@ -1,29 +1,29 @@
 /**
- * Types pour le classement par préférence esthétique (artworks uniquement).
- * Pas de puissance compétitive, meta, popularité ou cohérence mécanique.
+ * Types for aesthetic preference ranking (artworks only).
+ * No competitive power, meta, popularity or mechanical coherence.
  */
 
-/** Politique Extra Deck de l'archétype (pour matchmaking et tag affichage). */
+/** Extra Deck policy of the archetype (for matchmaking and display tag). */
 export type ExtraPolicy = 'none' | 'fusion' | 'synchro' | 'xyz' | 'link' | 'mixed'
 
-/** Un vote brut : A préféré à B (visuellement). */
+/** A raw vote: A preferred over B (visually). */
 export interface Vote {
   winnerId: string
   loserId: string
   timestamp: string
 }
 
-/** État du classement personnel (stockage local). */
+/** Personal ranking state (local storage). */
 export interface PersonalRankingState {
   userId: string
   votes: Vote[]
 }
 
-/** Profil esthétique d'un archétype (pas d'ATK/DEF, date, popularité, meta). */
+/** Aesthetic profile of an archetype (no ATK/DEF, date, popularity, meta). */
 export interface ArchetypeProfile {
-  /** IDs des 5 monstres Main Deck représentatifs (ordre stable). */
+  /** IDs of the 5 representative Main Deck monsters (stable order). */
   topMainIds: number[]
-  /** IDs des 5 monstres Extra Deck (vide si noExtra). */
+  /** IDs of the 5 Extra Deck monsters (empty if noExtra). */
   topExtraIds: number[]
   noExtra: boolean
   raceHistogram: Record<string, number>

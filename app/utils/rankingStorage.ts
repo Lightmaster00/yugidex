@@ -1,9 +1,6 @@
 import type { PersonalRankingState, Vote } from '~/types/ranking'
-import { INITIAL_ELO } from '~/types/tournament'
-import { applyElo } from '~/utils/elo'
 
 const STORAGE_KEY = 'yugidex-ranking'
-const K = 32
 
 function uuid (): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/x/g, () =>
@@ -11,7 +8,7 @@ function uuid (): string {
   )
 }
 
-/** Retourne un userId persistant (créé une fois en local). */
+/** Returns a persistent userId (created once locally). */
 export function getOrCreateUserId (): string {
   if (import.meta.server) return ''
   try {
@@ -30,7 +27,7 @@ export function getOrCreateUserId (): string {
   }
 }
 
-/** Charge l’état du classement personnel (votes). */
+/** Loads personal ranking state (votes). */
 export function loadPersonalRanking (): PersonalRankingState | null {
   if (import.meta.server) return null
   try {
@@ -47,7 +44,7 @@ export function loadPersonalRanking (): PersonalRankingState | null {
   }
 }
 
-/** Enregistre un vote (A préféré à B) et persiste. */
+/** Saves a vote (A preferred over B) and persists. */
 export function saveVote (winnerId: string, loserId: string): void {
   if (import.meta.server) return
   const state = loadPersonalRanking()
@@ -61,28 +58,4 @@ export function saveVote (winnerId: string, loserId: string): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
   } catch {}
-}
-
-/** Recalcule les ratings (Elo) à partir de l’historique des votes. */
-export function getRatingsFromVotes (
-  votes: Vote[],
-  knownArchetypeIds?: Set<string>
-): Record<string, number> {
-  const ratings: Record<string, number> = {}
-  const allIds = new Set<string>(knownArchetypeIds)
-  for (const v of votes) {
-    allIds.add(v.winnerId)
-    allIds.add(v.loserId)
-  }
-  for (const id of allIds) {
-    ratings[id] = INITIAL_ELO
-  }
-  for (const v of votes) {
-    const winnerElo = ratings[v.winnerId] ?? INITIAL_ELO
-    const loserElo = ratings[v.loserId] ?? INITIAL_ELO
-    const { newWinner, newLoser } = applyElo(winnerElo, loserElo, K)
-    ratings[v.winnerId] = newWinner
-    ratings[v.loserId] = newLoser
-  }
-  return ratings
 }

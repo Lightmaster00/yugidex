@@ -30,7 +30,7 @@ const useOfficialCard = computed(() => Boolean(fullCardImageUrl.value))
 </script>
 
 <template>
-  <!-- Mode: image officielle complète (API) — carte intacte sans overlay -->
+  <!-- Mode: full official image (API) — intact card without overlay -->
   <div
     v-if="useOfficialCard"
     class="ygo-card ygo-card--official"
@@ -42,7 +42,7 @@ const useOfficialCard = computed(() => Boolean(fullCardImageUrl.value))
     />
   </div>
 
-  <!-- Fallback: layout CSS (si pas d'image complète) -->
+  <!-- Fallback: CSS layout (when no full image) -->
   <div
     v-else
     class="ygo-card"
@@ -102,7 +102,7 @@ const useOfficialCard = computed(() => Boolean(fullCardImageUrl.value))
   max-width: 100%;
 }
 
-/* ========== Mode carte officielle (image complète API) ========== */
+/* ========== Official card mode (full API image) ========== */
 .ygo-card--official {
   position: relative;
   border-radius: 10px;

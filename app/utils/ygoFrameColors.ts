@@ -1,6 +1,6 @@
 /**
- * Couleurs des cadres Yu-Gi-Oh! par type (TCG/OCG).
- * Référence: Yugipedia Card colors
+ * Yu-Gi-Oh! frame colors by type (TCG/OCG).
+ * Reference: Yugipedia Card colors
  */
 export type YgoFrameType =
   | 'normal'

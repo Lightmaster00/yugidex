@@ -1,6 +1,6 @@
 /**
- * Cache d'images en IndexedDB (recommandation YGOPRODeck : ne pas hotlinker,
- * télécharger et stocker localement). Clé = cardId, valeur = Blob image.
+ * Image cache in IndexedDB (YGOPRODeck recommendation: do not hotlink,
+ * download and store locally). Key = cardId, value = image Blob.
  */
 
 const DB_NAME = 'yugidex-image-cache'
@@ -31,7 +31,7 @@ function openDb (): Promise<IDBDatabase> {
 export interface CachedImage {
   id: number
   blob: Blob
-  /** Pour invalidation si l'API change d'URL */
+  /** For invalidation if the API changes URL */
   cachedAt: number
 }
 
@@ -67,9 +67,9 @@ export async function setCachedImage (cardId: number, blob: Blob): Promise<void>
 }
 
 /**
- * Retourne une URL utilisable pour <img src> : depuis le cache si présente,
- * sinon télécharge l'URL, met en cache et retourne un object URL.
- * L'appelant doit révoquer l'object URL (URL.revokeObjectURL) pour libérer la mémoire.
+ * Returns a URL usable for <img src>: from cache if present,
+ * otherwise downloads the URL, caches it and returns an object URL.
+ * Caller must revoke the object URL (URL.revokeObjectURL) to free memory.
  */
 export async function getCachedImageUrl (
   cardId: number,
@@ -91,18 +91,4 @@ export async function getCachedImageUrl (
   } catch {
     return remoteUrl
   }
-}
-
-/** Supprime tout le cache (pour un bouton "Vider le cache" éventuel). */
-export async function clearImageCache (): Promise<void> {
-  const db = await openDb()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).clear()
-    tx.oncomplete = () => {
-      db.close()
-      resolve()
-    }
-    tx.onerror = () => reject(tx.error)
-  })
 }
