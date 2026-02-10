@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import type { TournamentState } from '~/types/tournament'
 import { useTournament } from '~/composables/useTournament'
-import { useCardLanguage, capitalizeArchetypeName, setPartnerMapFromCache, setRepresentativeMapFromCache, setEntityCardIdsFromCache } from '~/composables/useYgoApi'
+import { useCardLanguage, capitalizeArchetypeName, setPartnerMapFromCache, setRepresentativeMapFromCache, setEntityCardIdsFromCache, prefetchRepresentativesForArchetypes, clearRepresentativeResultCacheForNames } from '~/composables/useYgoApi'
 import { getCachedValidArchetypes, setCachedValidArchetypes } from '~/utils/archetypeCache'
 import { getOrCreateUserId, saveVote } from '~/utils/rankingStorage'
 
@@ -49,6 +49,7 @@ export function useTournamentState () {
       const seed = Math.floor(Math.random() * 1e6)
       state.value = createInitialState(cached.validNames.map(capitalizeArchetypeName), seed)
       await setNextMatch()
+      prefetchNextGroup()
       persistState(state.value!)
       return
     }
@@ -73,28 +74,29 @@ export function useTournamentState () {
     const seed = Math.floor(Math.random() * 1e6)
     state.value = createInitialState(result.validNames.map(capitalizeArchetypeName), seed)
     await setNextMatch()
+    prefetchNextGroup()
     persistState(state.value!)
   }
 
+  /** Charge le prochain duel avec images prêtes ; préchargement du groupe suivant minimise l'attente. */
   async function setNextMatch () {
     for (let attempt = 0; attempt < MAX_SKIP_RETRIES; attempt++) {
       const s = state.value
       if (!s) return
 
-      // Phase 1 / Phase 2: pre-computed groups
       if (s.phase === 'phase1' || s.phase === 'phase2') {
         const groups = s.currentRoundGroups
         if (!groups || s.groupsCompleted >= groups.length) {
-          // All groups in the round are finished (or skipped) → advance phase/round
           state.value = advanceToNextPhaseRound(s)
+          if (state.value?.phase === 'phase2' && state.value.phasePool?.length) {
+            clearRepresentativeResultCacheForNames(state.value.phasePool)
+          }
           persistState(state.value)
           continue
         }
         const nextGroup = groups[s.groupsCompleted]!
-        // Filter archetypes still present in the state
         const validGroup = nextGroup.filter(n => s.archetypes[n] != null)
         if (validGroup.length < 2) {
-          // Invalid group → skip
           state.value = { ...s, groupsCompleted: s.groupsCompleted + 1 }
           continue
         }
@@ -102,14 +104,13 @@ export function useTournamentState () {
         state.value = await ensureRepresentatives(state.value, validGroup)
         if (state.value?.currentMatch != null && state.value.currentMatch.length >= 2) {
           persistState(state.value)
+          prefetchNextGroup()
           return
         }
-        // ensureRepresentatives removed archetypes → skip this group
         state.value = { ...(state.value ?? s), groupsCompleted: s.groupsCompleted + 1 }
         continue
       }
 
-      // Phase 3 : Swiss 1v1
       if (s.phase === 'phase3') {
         if (isPhase3Done(s)) {
           state.value = { ...s, phase: 'finished', currentMatch: null }
@@ -128,7 +129,6 @@ export function useTournamentState () {
           persistState(state.value)
           return
         }
-        // Representatives failed → retry (state updated, archetypes removed)
         continue
       }
 
@@ -157,6 +157,16 @@ export function useTournamentState () {
     }
   }
 
+  /** Prefetch the next group's representatives so the next transition is faster. */
+  function prefetchNextGroup () {
+    const s = state.value
+    if (!s?.currentRoundGroups || s.phase !== 'phase1' && s.phase !== 'phase2') return
+    const nextIndex = s.groupsCompleted + 1
+    if (nextIndex >= s.currentRoundGroups.length) return
+    const nextGroup = s.currentRoundGroups[nextIndex] ?? []
+    if (nextGroup.length > 0) prefetchRepresentativesForArchetypes(nextGroup)
+  }
+
   /** Phase 1 & 2: user chooses a winner in a group of 4 (or 2-3). */
   async function pickGroup (winner: string, losers: string[]) {
     if (!state.value || losers.length < 1) return
@@ -164,10 +174,12 @@ export function useTournamentState () {
     for (const loser of losers) saveVote(winner, loser)
     state.value = applyGroupResult(state.value, winner, losers)
     persistState(state.value)
-    transitioning.value = true
+    const showLoaderAfter = setTimeout(() => { transitioning.value = true }, 120)
     try {
       await setNextMatch()
+      prefetchNextGroup()
     } finally {
+      clearTimeout(showLoaderAfter)
       transitioning.value = false
     }
   }
@@ -184,10 +196,11 @@ export function useTournamentState () {
       persistState(state.value)
       return
     }
-    transitioning.value = true
+    const showLoaderAfter = setTimeout(() => { transitioning.value = true }, 120)
     try {
       await setNextMatch()
     } finally {
+      clearTimeout(showLoaderAfter)
       transitioning.value = false
     }
   }

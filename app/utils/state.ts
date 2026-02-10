@@ -164,6 +164,20 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
       next.groupsTotal = groups.length
       next.currentRoundGroups = groups
       next.phasePool = pool
+      // Réinitialiser les représentants pour forcer rechargement + revalidation en phase 2
+      // (évite d'afficher des images trop petites validées en phase 1 ou en cache)
+      const nextArchetypes = { ...next.archetypes }
+      for (const name of pool) {
+        const entry = nextArchetypes[name]
+        if (entry) {
+          nextArchetypes[name] = {
+            elo: entry.elo,
+            wins: entry.wins,
+            losses: entry.losses
+          }
+        }
+      }
+      next.archetypes = nextArchetypes
       return next
     }
     // Next round in phase 1: groups by Elo proximity

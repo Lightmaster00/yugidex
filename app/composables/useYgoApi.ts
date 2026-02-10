@@ -29,7 +29,10 @@ export function useCardLanguage () {
     _language.value = lang
     if (import.meta.client) {
       try { localStorage.setItem('yugidex-lang', lang) } catch {}
-      if (prev !== lang) clearCachedArchetypes()
+      if (prev !== lang) {
+        clearCachedArchetypes()
+        clearRepresentativeResultCache()
+      }
     }
   }
   function loadLanguage () {
@@ -75,6 +78,23 @@ let _partnerMap = new Map<string, string[]>()
 let _representativeMap = new Map<string, number[]>()
 /** Card IDs (members+supports) per entity — for filtering API intruders */
 let _entityCardIds = new Map<string, Set<number>>()
+
+/** In-memory cache for representative results (per archetype) to speed up next-duel loading. */
+const _representativeResultCache = new Map<string, {
+  representativeCards: RepresentativeCard[]
+  representativeIndex: number
+  extraPolicy: import('~/types/ranking').ExtraPolicy
+  profile: import('~/types/ranking').ArchetypeProfile
+}>()
+
+export function clearRepresentativeResultCache (): void {
+  _representativeResultCache.clear()
+}
+
+/** Vide le cache des représentants pour des noms donnés (ex. pool phase 2 pour forcer revalidation). */
+export function clearRepresentativeResultCacheForNames (names: string[]): void {
+  for (const name of names) _representativeResultCache.delete(name)
+}
 
 export function getPartnerArchetypes (primaryName: string): string[] {
   return _partnerMap.get(primaryName) ?? []
@@ -294,8 +314,8 @@ export async function fetchCardsForArchetype (archetypeName: string): Promise<Yg
 // Representative cards (for tournament display)
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Minimum width/height for representative artwork (YGOPRODeck standard cropped is ~624×614). */
-const MIN_REPRESENTATIVE_IMAGE_SIZE = 400
+/** Minimum width and height for representative artwork (YGOPRODeck standard cropped ~624×614). Exclut les assets trop petits ou placeholder (ex. 400×400) et les images trop basses en hauteur. */
+const MIN_REPRESENTATIVE_IMAGE_SIZE = 550
 
 /**
  * Validates the format of representative images by loading each one and checking ratio and size.
@@ -341,6 +361,9 @@ export async function loadRepresentativesForArchetype (
   extraPolicy: import('~/types/ranking').ExtraPolicy
   profile: import('~/types/ranking').ArchetypeProfile
 } | null> {
+  const cached = _representativeResultCache.get(archetypeName)
+  if (cached) return cached
+
   const cards = await fetchCardsForArchetype(archetypeName)
   if (!hasValidRepresentatives(cards, archetypeName)) return null
 
@@ -362,7 +385,16 @@ export async function loadRepresentativesForArchetype (
   const { main, extra } = pick5Main5Extra(cards, archetypeName)
   const extraPolicy = getExtraPolicy(extra)
   const profile = buildArchetypeProfile(cards, archetypeName, main, extra)
-  return { representativeCards, representativeIndex: 0, extraPolicy, profile }
+  const result = { representativeCards, representativeIndex: 0, extraPolicy, profile }
+  _representativeResultCache.set(archetypeName, result)
+  return result
+}
+
+/** Preload representatives for archetypes in the background (e.g. next group). Speeds up the next duel. */
+export function prefetchRepresentativesForArchetypes (names: string[]): void {
+  for (const name of names) {
+    loadRepresentativesForArchetype(name).catch(() => { /* ignore */ })
+  }
 }
 
 export async function loadRepresentativeForArchetype (

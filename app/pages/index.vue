@@ -175,38 +175,56 @@ function cycleAllCards () {
   matchDisplayGlobalIdx.value = (matchDisplayGlobalIdx.value + 1) % matchDisplayTotalSteps.value
 }
 
-/** Progress percentage of the current phase (0–100). Phase 1: per round (0→100 each round). */
+/** Cible de progression (0–100), valeur réelle. */
 const phaseProgressPercent = computed(() => {
   const s = state.value
   if (!s) return 0
-  if (s.phase === 'phase1') {
+  if (s.phase === 'phase1' || s.phase === 'phase2') {
     if (!s.groupsTotal) return 0
-    return Math.round((s.groupsCompleted / s.groupsTotal) * 100)
-  }
-  if (s.phase === 'phase2') {
-    if (!s.groupsTotal) return 0
-    return Math.round((s.groupsCompleted / s.groupsTotal) * 100)
+    return (s.groupsCompleted / s.groupsTotal) * 100
   }
   if (s.phase === 'phase3') {
     const pool = s.phasePool
     const matchesPerRound = Math.floor(pool.length / 2)
     const total = matchesPerRound * SWISS_ROUND_COUNT
     if (total <= 0) return 0
-    return Math.round((s.matchesPlayed.length / total) * 100)
+    return (s.matchesPlayed.length / total) * 100
   }
   return 0
 })
 
-/** Phase badge text: Phase 1 = "Round X of 2 — Y%", otherwise "Phase — Y%". */
+/** Pourcentage affiché, animé linéairement vers la cible (pas de saut). */
+const displayedProgressPercent = ref(0)
+const PROGRESS_ANIM_DURATION_MS = 450
+let progressAnimId = 0
+watch(
+  phaseProgressPercent,
+  (target) => {
+    const start = displayedProgressPercent.value
+    const startTime = performance.now()
+    const tick = () => {
+      const t = Math.min((performance.now() - startTime) / PROGRESS_ANIM_DURATION_MS, 1)
+      const ease = 1 - (1 - t) * (1 - t) // easeOutQuad
+      displayedProgressPercent.value = start + (target - start) * ease
+      if (t < 1) progressAnimId = requestAnimationFrame(tick)
+    }
+    cancelAnimationFrame(progressAnimId)
+    progressAnimId = requestAnimationFrame(tick)
+  },
+  { immediate: true }
+)
+
+/** Phase badge text: pourcentage animé (progression linéaire visuelle). */
 const phaseBadgeText = computed(() => {
   const s = state.value
   if (!s || s.phase === 'finished') return ''
+  const percent = Math.round(displayedProgressPercent.value)
   if (s.phase === 'phase1') {
     const roundNum = (s.phaseRound ?? 0) + 1
-    return `${i('phase1.badge')} — Round ${roundNum} of ${COVERAGE_ROUND_COUNT} — ${phaseProgressPercent.value}%`
+    return `${i('phase1.badge')} — Round ${roundNum} of ${COVERAGE_ROUND_COUNT} — ${percent}%`
   }
-  const label = s.phase === 'phase2' ? i('phase2.badge') : i('phase3.badge')
-  return `${label} — ${phaseProgressPercent.value}%`
+  const phaseLabel = s.phase === 'phase2' ? i('phase2.badge') : i('phase3.badge')
+  return `${phaseLabel} — ${percent}%`
 })
 
 /** Grid class based on group size. */
@@ -286,7 +304,7 @@ const podiumSlots = computed(() => {
       </div>
       <!-- Thin progress bar at bottom of header -->
       <div v-if="state && state.phase !== 'finished'" class="header-progress">
-        <div class="header-progress__fill" :style="{ width: phaseProgressPercent + '%' }" />
+        <div class="header-progress__fill" :style="{ width: displayedProgressPercent + '%' }" />
       </div>
     </header>
 
