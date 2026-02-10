@@ -88,6 +88,8 @@ export const INITIAL_ELO = 1000
 
 /** Phase 1: 2 coverage rounds (groups of 4, full pool) */
 export const COVERAGE_ROUND_COUNT = 2
+/** Phase 2: number of refinement rounds (groups of 4, top 50%) */
+export const REFINEMENT_ROUND_COUNT = 2
 /** Phase 2: fraction of pool retained (top 50%) */
 export const REFINEMENT_POOL_FRACTION = 0.5
 /** Phase 3: Swiss pool size (24 finalists) */

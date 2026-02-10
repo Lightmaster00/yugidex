@@ -85,26 +85,34 @@ function chunkGroups (items: string[], groupSize: number): string[][] {
 }
 
 /**
- * Merges tail groups that are too small (1 element): borrows one element
- * from the previous group instead of merging (avoids groups > groupSize).
+ * Merges all groups that are too small (< 2 elements).
+ * Borrows from a neighbor (keeping it ≥ 2) so no group exceeds groupSize.
+ * If the neighbor has only 2, merges entirely (result ≤ 3).
  */
-function mergeSmallTailGroups (groups: string[][]): string[][] {
+function mergeSmallGroups (groups: string[][]): string[][] {
   if (groups.length <= 1) return groups
   const out = [...groups.map(g => [...g])]
-  while (out.length > 1 && out[out.length - 1]!.length === 1) {
-    const last = out[out.length - 1]!
-    const prev = out[out.length - 2]!
-    if (prev.length >= 3) {
-      // Borrow one element to rebalance: [4,1] → [3,2]
-      const borrowed = prev.pop()!
-      last.unshift(borrowed)
+  let i = 0
+  while (i < out.length) {
+    if (out[i]!.length < 2) {
+      // Pick a neighbor to fix from (prefer next, else previous)
+      const neighborIdx = i + 1 < out.length ? i + 1 : i - 1
+      if (neighborIdx < 0) { i++; continue }
+      const neighbor = out[neighborIdx]!
+      if (neighbor.length >= 3) {
+        // Borrow one element: [1] + borrow → [2], neighbor stays ≥ 2
+        const borrowed = neighborIdx > i ? neighbor.shift()! : neighbor.pop()!
+        out[i]!.push(borrowed)
+        i++
+      } else {
+        // Neighbor has 2: merge into it (result = 3, acceptable)
+        neighbor.push(...out[i]!)
+        out.splice(i, 1)
+        // Don't increment i — re-check at same index
+      }
     } else {
-      // prev too small to borrow, merge (remains ≤ 3)
-      out.pop()
-      prev.push(...last)
+      i++
     }
-    // If the last group now has ≥ 2, stop
-    if (out[out.length - 1]!.length >= 2) break
   }
   return out
 }
@@ -130,7 +138,7 @@ export function buildCoverageGroups (
     const shuffled = themedShuffle(themed, archetypes, seed + t * 777)
     allGroups.push(...chunkGroups(shuffled, groupSize))
   }
-  return mergeSmallTailGroups(allGroups)
+  return mergeSmallGroups(allGroups)
 }
 
 /**
@@ -192,7 +200,7 @@ export function buildEloProximityGroups (
       }
     }
   }
-  return mergeSmallTailGroups(allGroups)
+  return mergeSmallGroups(allGroups)
 }
 
 /**

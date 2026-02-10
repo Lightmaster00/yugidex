@@ -2,6 +2,7 @@ import type { TournamentState, ArchetypeState } from '~/types/tournament'
 import {
   INITIAL_ELO,
   COVERAGE_ROUND_COUNT,
+  REFINEMENT_ROUND_COUNT,
   REFINEMENT_POOL_FRACTION,
   SWISS_POOL_SIZE,
   SWISS_ROUND_COUNT,
@@ -154,10 +155,10 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
   if (state.phase === 'phase1') {
     const nextPhaseRound = state.phaseRound + 1
     if (nextPhaseRound >= COVERAGE_ROUND_COUNT) {
-      // → Phase 2: top 50%, groups of 3 (theme / Elo proximity)
+      // → Phase 2: top 50%, groups of 4 (theme / Elo proximity)
       const poolSize = Math.max(4, Math.ceil(state.remainingNames.length * REFINEMENT_POOL_FRACTION))
       const pool = getTopByElo(state.archetypes, state.remainingNames, poolSize)
-      const groups = buildEloProximityGroups(pool, state.archetypes, state.seed + 5000, 3)
+      const groups = buildEloProximityGroups(pool, state.archetypes, state.seed + 5000)
       next.phase = 'phase2'
       next.phaseRound = 0
       next.groupsCompleted = 0
@@ -165,7 +166,6 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
       next.currentRoundGroups = groups
       next.phasePool = pool
       // Réinitialiser les représentants pour forcer rechargement + revalidation en phase 2
-      // (évite d'afficher des images trop petites validées en phase 1 ou en cache)
       const nextArchetypes = { ...next.archetypes }
       for (const name of pool) {
         const entry = nextArchetypes[name]
@@ -194,16 +194,30 @@ export function advanceToNextPhaseRound (state: TournamentState): TournamentStat
   }
 
   if (state.phase === 'phase2') {
-    // → Phase 3: top 24 Swiss
-    const poolSize = Math.min(SWISS_POOL_SIZE, state.phasePool.length)
-    const pool = getTopByElo(state.archetypes, state.phasePool, poolSize)
-    next.phase = 'phase3'
-    next.phaseRound = 0
+    const nextPhaseRound = state.phaseRound + 1
+    if (nextPhaseRound >= REFINEMENT_ROUND_COUNT) {
+      // → Phase 3: top 24 Swiss
+      const poolSize = Math.min(SWISS_POOL_SIZE, state.phasePool.length)
+      const pool = getTopByElo(state.archetypes, state.phasePool, poolSize)
+      next.phase = 'phase3'
+      next.phaseRound = 0
+      next.groupsCompleted = 0
+      next.groupsTotal = 0
+      next.currentRoundGroups = null
+      next.phasePool = pool
+      next.matchesPlayed = []
+      return next
+    }
+    // Next round in phase 2: re-group by Elo proximity
+    const groups = buildEloProximityGroups(
+      state.phasePool,
+      state.archetypes,
+      state.seed + 5000 + nextPhaseRound * 1000
+    )
+    next.phaseRound = nextPhaseRound
     next.groupsCompleted = 0
-    next.groupsTotal = 0
-    next.currentRoundGroups = null
-    next.phasePool = pool
-    next.matchesPlayed = []
+    next.groupsTotal = groups.length
+    next.currentRoundGroups = groups
     return next
   }
 

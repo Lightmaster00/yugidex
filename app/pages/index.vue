@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { YgoCard } from '~/types/api'
 import { t } from '~/utils/i18n'
-import { COVERAGE_ROUND_COUNT, SWISS_ROUND_COUNT } from '~/types/tournament'
+import { COVERAGE_ROUND_COUNT, REFINEMENT_ROUND_COUNT, SWISS_ROUND_COUNT } from '~/types/tournament'
 import { MAIN_DISPLAY_COUNT, EXTRA_DISPLAY_COUNT, getCardCategory, getFullCardImageUrl } from '~/utils/representativeCard'
 import { fetchCardsForArchetype, displayArchetypeName } from '~/composables/useYgoApi'
 import { analyzeArchetypeCoherence, type ArchetypeCoherenceResult } from '~/utils/archetypeLinks'
@@ -223,8 +223,11 @@ const phaseBadgeText = computed(() => {
     const roundNum = (s.phaseRound ?? 0) + 1
     return `${i('phase1.badge')} — Round ${roundNum} of ${COVERAGE_ROUND_COUNT} — ${percent}%`
   }
-  const phaseLabel = s.phase === 'phase2' ? i('phase2.badge') : i('phase3.badge')
-  return `${phaseLabel} — ${percent}%`
+  if (s.phase === 'phase2') {
+    const roundNum = (s.phaseRound ?? 0) + 1
+    return `${i('phase2.badge')} — Round ${roundNum} of ${REFINEMENT_ROUND_COUNT} — ${percent}%`
+  }
+  return `${i('phase3.badge')} — ${percent}%`
 })
 
 /** Grid class based on group size. */
